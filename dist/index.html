@@ -20,9 +20,9 @@
       rel="stylesheet"
     />
     <script src="https://start.ng/kit.js" data-back="off" data-badge="off" defer></script>
-    <script type="module" crossorigin src="./assets/index-avo5IwIB.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/three-Bc0hkpcq.js">
-    <link rel="stylesheet" crossorigin href="./assets/index-DO9byka8.css">
+    <script type="module" crossorigin src="./assets/index-DeQ4zvBZ.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/three-DytH_LNk.js">
+    <link rel="stylesheet" crossorigin href="./assets/index-C0bmY_Tx.css">
   </head>
   <body>
     <canvas id="world"></canvas>
@@ -40,6 +40,7 @@
         </div>
       </div>
       <div id="enemy-bars"></div>
+      <div id="world-waypoints"></div>
     </div>
 
     <!-- DUNEFALL Tactical HUD -->
@@ -50,7 +51,7 @@
           <div class="wave-card">
             <div class="wave-num" id="wave-num">1</div>
             <div class="wave-meta">
-              <div class="wave-title">DUNEFALL</div>
+              <div class="wave-title" id="wave-title">DUNEFALL</div>
               <div class="wave-sub" id="wave-sub">Outpost ridge · 5 on the field</div>
             </div>
           </div>
@@ -64,6 +65,43 @@
                 <span id="pilot-account">Made on start.ng</span>
               </div>
               <button id="pilot-signin" class="pilot-signin" type="button" hidden>Sign in</button>
+            </div>
+          </div>
+
+          <!-- Non-blocking Diegetic Radio Comms Feed (Story Mode) -->
+          <div id="radio-box" class="radio-box hidden" aria-live="polite">
+            <div class="radio-portrait" id="radio-portrait"></div>
+            <div class="radio-body">
+              <div class="radio-head">
+                <span class="radio-callsign" id="radio-callsign">CMDR. KORA</span>
+                <span class="radio-role" id="radio-role">OVERWATCH-01</span>
+                <span class="radio-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+              </div>
+              <p class="radio-text" id="radio-text"></p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top-Center Story Objective & Boss Dreadnought Bar -->
+        <div class="hud-top-center">
+          <div id="objective-bar" class="objective-bar hidden">
+            <div class="obj-head">
+              <span class="obj-code" id="obj-code">OP-01 · FIRST CONTACT</span>
+              <span class="obj-counter" id="obj-counter">0 / 5</span>
+            </div>
+            <div class="obj-text" id="obj-text">Eliminate Crimson Recon Vanguard</div>
+            <div class="obj-track"><div class="obj-fill" id="obj-fill" style="width: 0%"></div></div>
+            <div class="obj-sub" id="obj-sub"></div>
+          </div>
+
+          <div id="boss-bar" class="boss-bar hidden">
+            <div class="boss-head">
+              <span class="boss-name">WARDEN VEX // SOLARIS-0</span>
+              <span class="boss-phase" id="boss-phase">PHASE I</span>
+            </div>
+            <div class="boss-track">
+              <div class="boss-fill" id="boss-fill" style="width: 100%"></div>
+              <div class="boss-notch" title="Phase II Overdrive Threshold"></div>
             </div>
           </div>
         </div>
@@ -170,6 +208,7 @@
           </div>
 
           <div class="util-bar">
+            <button class="util-btn" id="btn-modes" type="button">Modes</button>
             <button class="util-btn" id="btn-restart" type="button">Restart</button>
             <button class="util-btn" id="btn-drive" type="button">Drive · <kbd>T</kbd></button>
             <button class="util-btn" id="btn-stance" type="button">Strider · <kbd>Z</kbd></button>
@@ -227,21 +266,130 @@
     <!-- Click-to-Aim Hint (Non-blocking subtle prompt) -->
     <div id="aim-hint" class="aim-hint">Click battlefield to lock aim · LMB Fire · T Transform to Car · 4 Support Squad</div>
 
+    <!-- Mode Select / Campaign Command Launch Overlay -->
+    <div id="mode-modal" class="modal mode-modal">
+      <div class="mode-shell">
+        <div class="mode-brand">
+          <div class="mode-kicker">SECTOR 09 // THE GLASS REACH</div>
+          <h1>DUNEFALL</h1>
+          <p class="mode-tagline">Command a twin-minigun bronze war mech and transform on the fly into a 6-wheel combat car across the dunes.</p>
+        </div>
+
+        <div class="mode-grid">
+          <div class="mode-card featured">
+            <div class="mode-card-top">
+              <span class="mode-pill amber">STORY CAMPAIGN</span>
+              <span class="mode-meta" id="story-progress-badge">5 CHAPTERS · BOSS FINALE</span>
+            </div>
+            <h2>THE GLASS REACH</h2>
+            <p class="mode-desc">
+              Push back Warden Vex's Crimson legion across 5 scripted desert ops—core salvage, relay capture, ATLAS-6 convoy escort, artillery sabotage, and a 2-phase dreadnought duel with live radio comms & tactical refits.
+            </p>
+            <div class="chapter-pills" id="chapter-pills"></div>
+            <button id="btn-launch-story" class="primary-btn mode-cta" type="button">Start Story Campaign</button>
+          </div>
+
+          <div class="mode-card">
+            <div class="mode-card-top">
+              <span class="mode-pill">ARCADE SURVIVAL</span>
+              <span class="mode-meta">GLOBAL LEADERBOARD</span>
+            </div>
+            <h2>ENDLESS SKIRMISH</h2>
+            <p class="mode-desc">
+              Drop straight into escalating Crimson waves across the desert mesas. Collect emerald cores to hit Tier 5, unleash Support Squads, and chase high scores on start.ng.
+            </p>
+            <ul class="mode-bullets">
+              <li>5 weapon loadouts (<kbd>G</kbd>–<kbd>L</kbd>) &amp; car morph (<kbd>T</kbd>)</li>
+              <li>Auto-saves top score, wave &amp; kills to start.ng</li>
+            </ul>
+            <button id="btn-launch-endless" class="ghost-btn mode-cta" type="button">Launch Endless Mode</button>
+          </div>
+        </div>
+
+        <div class="go-footer">
+          Play more community games on <a href="https://start.ng">start.ng</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chapter Debrief & Tactical Choice Briefing Modal -->
+    <div id="briefing-modal" class="modal hidden">
+      <div class="modal-card briefing-card">
+        <div class="modal-head">
+          <h2 id="brief-kicker">OP-01 COMPLETE</h2>
+          <span class="sng-tag" id="brief-sector">RED CANYON</span>
+        </div>
+        <div class="brief-summary" id="brief-summary"></div>
+
+        <div id="choice-section" class="choice-section">
+          <div class="choice-label">CHOOSE FIELD REFIT (PERMANENT FOR CAMPAIGN)</div>
+          <div class="choice-grid" id="choice-grid"></div>
+        </div>
+
+        <div class="next-op-box">
+          <div class="next-op-head">
+            <span id="next-op-code">NEXT OP // OP-02</span>
+            <strong id="next-op-title">SIGNAL FIRE</strong>
+          </div>
+          <p id="next-op-brief"></p>
+          <div class="next-op-hint" id="next-op-hint"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-deploy-next" class="primary-btn" type="button">Deploy Next Chapter</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Campaign Victory Modal -->
+    <div id="victory-modal" class="modal hidden">
+      <div class="modal-card victory-card">
+        <div class="modal-head">
+          <h2>SECTOR 09 SECURED // VICTORY</h2>
+          <span class="sng-tag">CAMPAIGN CLEAR</span>
+        </div>
+        <div class="victory-hero">
+          <div class="rank-crest" id="vic-rank-letter">S</div>
+          <div>
+            <div class="victory-sub">SOLARIS-0 DESTROYED · WARDEN VEX DEFEATED</div>
+            <p class="victory-epilogue">
+              With the Helios array blazing back online, the Crimson Directorate breaks orbit over the Glass Reach. Vanguard stands victorious across the dunes.
+            </p>
+          </div>
+        </div>
+        <div class="go-stats">
+          <div class="go-stat"><span>CAMPAIGN SCORE</span><strong id="vic-score">0</strong></div>
+          <div class="go-stat"><span>CLEAR TIME</span><strong id="vic-time">0:00</strong></div>
+          <div class="go-stat"><span>TOTAL KILLS</span><strong id="vic-kills">0</strong></div>
+        </div>
+        <p class="go-rank" id="vic-rank">Saving campaign score to start.ng leaderboard...</p>
+        <div class="modal-actions">
+          <button id="btn-vic-endless" class="primary-btn" type="button">Play Endless Mode</button>
+          <button id="btn-vic-replay" class="ghost-btn" type="button">Replay Story</button>
+          <button id="btn-vic-share" class="ghost-btn" type="button">Share on X</button>
+        </div>
+        <div class="go-footer">
+          Play more community games on <a href="https://start.ng">start.ng</a>
+        </div>
+      </div>
+    </div>
+
     <!-- Round Over / Score Summary Modal -->
     <div id="gameover-modal" class="modal hidden">
       <div class="modal-card">
         <div class="modal-head">
-          <h2>DUNEFALL // UNIT DOWN</h2>
+          <h2 id="go-title">DUNEFALL // UNIT DOWN</h2>
           <span class="sng-tag">start.ng</span>
         </div>
         <div class="go-stats">
           <div class="go-stat"><span>SCORE</span><strong id="go-score">0</strong></div>
-          <div class="go-stat"><span>WAVE</span><strong id="go-wave">1</strong></div>
+          <div class="go-stat"><span id="go-wave-lbl">WAVE</span><strong id="go-wave">1</strong></div>
           <div class="go-stat"><span>KILLS</span><strong id="go-kills">0</strong></div>
         </div>
         <p class="go-rank" id="go-rank">Sign in on start.ng to save your best run to the leaderboard.</p>
         <div class="modal-actions">
           <button id="btn-play-again" class="primary-btn" type="button">Deploy Again</button>
+          <button id="btn-go-modes" class="ghost-btn" type="button">Modes</button>
           <button id="btn-go-share" class="ghost-btn" type="button">Share on X</button>
         </div>
         <div class="go-footer">
@@ -286,8 +434,9 @@
           <button id="toggle-shake" class="set-btn active" type="button">100%</button>
         </div>
         <div class="modal-actions">
-          <button id="btn-resume" class="primary-btn" type="button">Resume Skirmish</button>
-          <button id="btn-modal-restart" class="ghost-btn" type="button">Restart Wave 1</button>
+          <button id="btn-resume" class="primary-btn" type="button">Resume</button>
+          <button id="btn-modal-modes" class="ghost-btn" type="button">Switch Mode</button>
+          <button id="btn-modal-restart" class="ghost-btn" type="button">Restart</button>
         </div>
         <div class="go-footer">
           Play more community games on <a href="https://start.ng">start.ng</a>

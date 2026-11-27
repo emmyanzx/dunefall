@@ -616,3 +616,384 @@ export function buildEnergyCore() {
   group.add(cube, halo);
   return { group, cube };
 }
+
+// ── STORY MODE 3D PROPS, CONVOY & BOSS RIGS ─────────────────────────────────
+
+/** Chapter 1 Encrypted Relay Core with vertical emerald extraction beacon */
+export function buildMissionCore() {
+  const group = new THREE.Group();
+  const cube = new THREE.Mesh(new THREE.OctahedronGeometry(0.76, 0), mats.coreGreen);
+  cube.position.y = 1.35;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(1.4, 1.85, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0x4ade80,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.72,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.16;
+
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.55, 26, 10, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0x4ade80,
+      transparent: true,
+      opacity: 0.24,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  beam.position.y = 13;
+
+  const halo = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: glowTex,
+      color: 0x4ade80,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  halo.position.y = 1.35;
+  halo.scale.set(4.5, 4.5, 1);
+  group.add(cube, ring, beam, halo);
+  return { group, cube, ring, beam };
+}
+
+/** Chapter 2 Helios Relay Tower with pulsing capture ring & orbital uplink beam */
+export function buildRelayTower(captureRadius = 12) {
+  const group = new THREE.Group();
+  group.add(makeShadow(6.5, 6.5));
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.8, 1.5, 8), mats.darkJoint);
+  base.position.y = 0.75;
+  base.castShadow = true;
+  base.receiveShadow = true;
+
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 1.25, 7.6, 8), mats.heroArmor);
+  shaft.position.y = 5.0;
+  shaft.castShadow = true;
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.7, 8), mats.heroBronze);
+  collar.position.y = 7.4;
+
+  const spinner = new THREE.Group();
+  spinner.position.y = 9.2;
+  const dishArm = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.36, 0.52), mats.barrelSteel);
+  const dishCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.85, 0), mats.visorAmber.clone());
+  spinner.add(dishArm, dishCore);
+
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xf5b942,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.55,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const captureRing = new THREE.Mesh(new THREE.RingGeometry(captureRadius - 0.55, captureRadius, 40), ringMat);
+  captureRing.rotation.x = -Math.PI / 2;
+  captureRing.position.y = 0.24;
+
+  const fillMat = new THREE.MeshBasicMaterial({
+    color: 0x4ade80,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.16,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const fillDisc = new THREE.Mesh(new THREE.CircleGeometry(captureRadius - 0.6, 36), fillMat);
+  fillDisc.rotation.x = -Math.PI / 2;
+  fillDisc.position.y = 0.2;
+  fillDisc.scale.setScalar(0.05);
+
+  const skyBeamMat = new THREE.MeshBasicMaterial({
+    color: 0x4ade80,
+    transparent: true,
+    opacity: 0.0,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const skyBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.9, 65, 12, 1, true), skyBeamMat);
+  skyBeam.position.y = 41;
+
+  group.add(base, shaft, collar, spinner, captureRing, fillDisc, skyBeam);
+  return { group, spinner, dishCore, ringMat, fillDisc, fillMat, skyBeamMat };
+}
+
+/** Chapter 3 ATLAS-6 Heavy Armored 6-Wheel Core Hauler */
+export function buildConvoyHauler() {
+  const group = new THREE.Group();
+  group.add(makeShadow(5.4, 8.8));
+
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(3.1, 1.05, 7.6), mats.carBody);
+  chassis.position.y = 1.25;
+  chassis.castShadow = true;
+  chassis.receiveShadow = true;
+
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.65, 1.25, 2.35), mats.heroArmor);
+  cab.position.set(0, 2.25, -2.15);
+  cab.castShadow = true;
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.36, 0.2), mats.visorAmber);
+  windshield.position.set(0, 2.36, -3.32);
+
+  // Twin armored emerald fusion core pods on rear cargo bed
+  const cargoFrame = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.35, 4.1), mats.heroBronze);
+  cargoFrame.position.set(0, 1.9, 1.35);
+  for (const sx of [-0.72, 0.72]) {
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 3.2, 10), mats.coreGreen);
+    tank.rotation.x = Math.PI / 2;
+    tank.position.set(sx, 2.45, 1.35);
+    group.add(tank);
+  }
+
+  // Roof point-defense turret
+  const turret = new THREE.Group();
+  turret.position.set(0, 3.02, -2.05);
+  const tHead = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.42, 0.85), mats.darkJoint);
+  const tBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 1.75, 8), mats.barrelSteel);
+  tBarrel.rotation.x = Math.PI / 2;
+  tBarrel.position.set(0, 0.04, -1.05);
+  turret.add(tHead, tBarrel);
+
+  // Escort proximity ring around ATLAS-6
+  const auraMat = new THREE.MeshBasicMaterial({
+    color: 0x4ade80,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.25,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const auraRing = new THREE.Mesh(new THREE.RingGeometry(4.8, 5.2, 32), auraMat);
+  auraRing.rotation.x = -Math.PI / 2;
+  auraRing.position.y = 0.22;
+
+  const wheels: THREE.Object3D[] = [];
+  for (const sx of [-1.72, 1.72]) {
+    for (const wz of [-2.45, 0.1, 2.55]) {
+      const w = makeWheel(0.84, 0.58);
+      w.position.set(sx, 0.84, wz);
+      group.add(w);
+      wheels.push(w);
+    }
+  }
+
+  group.add(chassis, cab, windshield, cargoFrame, turret, auraRing);
+  return { group, wheels, turret, auraMat };
+}
+
+/** Chapter 4 Crimson Artillery Siege Pylon */
+export function buildArtilleryPylon() {
+  const group = new THREE.Group();
+  group.add(makeShadow(6.0, 6.0));
+
+  const bodyMeshes: THREE.Mesh[] = [];
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.0, 1.6, 8), mats.enemyDark);
+  base.position.y = 0.8;
+  base.castShadow = true;
+  bodyMeshes.push(base);
+
+  // Four armored crimson stabilizer fins
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.55, 6.4, 1.45), mats.enemyRed);
+    fin.position.set(Math.cos(a) * 1.65, 4.4, Math.sin(a) * 1.65);
+    fin.rotation.y = -a;
+    fin.castShadow = true;
+    group.add(fin);
+    bodyMeshes.push(fin);
+  }
+
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(1.15, 0), mats.visorRed);
+  core.position.y = 5.6;
+
+  const emitter = new THREE.Group();
+  emitter.position.y = 8.4;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.22, 8, 16), mats.enemyDark);
+  ring.rotation.x = Math.PI / 2;
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.95, 2.2, 8), mats.barrelSteel);
+  crown.position.y = 1.1;
+  emitter.add(ring, crown);
+
+  const halo = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: glowTex,
+      color: 0xff3b3b,
+      transparent: true,
+      opacity: 0.78,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  halo.position.y = 5.6;
+  halo.scale.set(5.4, 5.4, 1);
+
+  group.add(base, core, emitter, halo);
+  return { group, core, emitter, bodyMeshes };
+}
+
+/** Chapter 5 Dreadnought Boss Rig: WARDEN VEX // SOLARIS-0 (2.1x scale!) */
+export function buildBossMech(): EnemyRig & { solarCore: THREE.Mesh; overdriveAura: THREE.Mesh } {
+  const group = new THREE.Group();
+  group.scale.setScalar(2.05);
+  group.add(makeShadow(4.6, 4.6));
+
+  const bodyMeshes: THREE.Mesh[] = [];
+  const pelvis = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.65, 1.25), mats.darkJoint);
+  pelvis.position.y = 2.05;
+  pelvis.castShadow = true;
+  group.add(pelvis);
+
+  const upper = new THREE.Group();
+  upper.position.y = 2.4;
+  group.add(upper);
+
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(2.25, 1.55, 1.65), mats.enemyDark);
+  torso.position.y = 0.78;
+  torso.castShadow = true;
+
+  const chestArmor = new THREE.Mesh(new THREE.BoxGeometry(1.75, 1.05, 1.82), mats.enemyRed);
+  chestArmor.position.y = 0.85;
+  chestArmor.castShadow = true;
+
+  // Blazing Solar Furnace core on chest & back
+  const solarCoreMat = new THREE.MeshStandardMaterial({
+    color: 0xffb347,
+    emissive: 0xff3b1f,
+    emissiveIntensity: 3.0,
+    roughness: 0.15,
+  });
+  const solarCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.54, 0), solarCoreMat);
+  solarCore.position.set(0, 0.86, -0.96);
+
+  const dorsalCore = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.55), solarCoreMat);
+  dorsalCore.position.set(0, 0.95, 0.98);
+
+  // Horned crimson dreadnought head crest
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.62, 0.98), mats.enemyDark);
+  head.position.set(0, 1.82, -0.12);
+  head.castShadow = true;
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.22, 0.22), mats.visorRed);
+  visor.position.set(0, 1.84, -0.62);
+  for (const s of [-1, 1] as const) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.72, 6), mats.enemyRed);
+    horn.position.set(s * 0.44, 2.26, -0.05);
+    horn.rotation.z = -s * 0.36;
+    upper.add(horn);
+  }
+
+  // Towering twin shoulder plasma rail-cannons + massive pauldrons
+  for (const side of [-1, 1] as const) {
+    const pauldron = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.92, 1.55), mats.enemyRed);
+    pauldron.position.set(side * 1.58, 1.15, 0);
+    pauldron.rotation.z = -side * 0.2;
+    pauldron.castShadow = true;
+
+    const railMount = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.68, 1.7), mats.enemyDark);
+    railMount.position.set(side * 1.52, 2.02, -0.15);
+    railMount.castShadow = true;
+
+    const railUpper = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.14, 2.9), mats.barrelSteel);
+    railUpper.position.set(side * 1.52, 2.18, -1.75);
+    const railLower = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.14, 2.9), mats.barrelSteel);
+    railLower.position.set(side * 1.52, 1.88, -1.75);
+    const railGlow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 2.7), mats.visorRed);
+    railGlow.position.set(side * 1.52, 2.03, -1.65);
+
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.62, 1.15, 0.8), mats.enemyDark);
+    arm.position.set(side * 1.7, 0.22, -0.2);
+    arm.castShadow = true;
+
+    upper.add(pauldron, railMount, railUpper, railLower, railGlow, arm);
+    bodyMeshes.push(pauldron, arm);
+  }
+
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 1.75, -3.1);
+  upper.add(torso, chestArmor, solarCore, dorsalCore, head, visor, muzzle);
+  bodyMeshes.push(torso, chestArmor);
+
+  const makeBossLeg = (side: -1 | 1) => {
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.82, 2.02, 0);
+    const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.72, 1.08, 0.88), mats.enemyDark);
+    thigh.position.y = -0.45;
+    thigh.castShadow = true;
+    const shin = new THREE.Mesh(new THREE.BoxGeometry(0.84, 1.18, 0.98), mats.enemyRed);
+    shin.position.set(0, -1.35, 0.1);
+    shin.castShadow = true;
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.36, 1.44), mats.darkJoint);
+    foot.position.set(0, -1.85, -0.06);
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.9, 8), mats.visorRed);
+    flame.rotation.x = Math.PI / 2.2;
+    flame.position.set(0, -1.45, 0.98);
+    leg.add(thigh, shin, foot, flame);
+    return leg;
+  };
+  const leftLeg = makeBossLeg(-1);
+  const rightLeg = makeBossLeg(1);
+  group.add(leftLeg, rightLeg);
+
+  // Overdrive ground aura ring (lights up in Phase 2 < 50% HP!)
+  const overdriveAura = new THREE.Mesh(
+    new THREE.RingGeometry(2.3, 2.75, 28),
+    new THREE.MeshBasicMaterial({
+      color: 0xff3b1f,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  overdriveAura.rotation.x = -Math.PI / 2;
+  overdriveAura.position.y = 0.18;
+  group.add(overdriveAura);
+
+  return { group, upper, leftLeg, rightLeg, muzzle, bodyMeshes, solarCore, overdriveAura };
+}
+
+/** Telegraphed red impact circle on the dunes for Artillery & Boss Solar Barrage */
+export function buildDangerRing(radius = 6.5) {
+  const group = new THREE.Group();
+  const outer = new THREE.Mesh(
+    new THREE.RingGeometry(radius - 0.35, radius, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0xff3b3b,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  outer.rotation.x = -Math.PI / 2;
+  outer.position.y = 0.25;
+
+  const innerMat = new THREE.MeshBasicMaterial({
+    color: 0xff5533,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.28,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const inner = new THREE.Mesh(new THREE.CircleGeometry(radius - 0.35, 28), innerMat);
+  inner.rotation.x = -Math.PI / 2;
+  inner.position.y = 0.22;
+  inner.scale.setScalar(0.05);
+
+  group.add(outer, inner);
+  return { group, inner, innerMat };
+}

@@ -11,13 +11,32 @@ import { createDesertSkyTexture, createSoftGlowTexture } from "./textures";
 import {
   buildAllyCar,
   buildAllyDrone,
+  buildArtilleryPylon,
+  buildBossMech,
+  buildConvoyHauler,
+  buildDangerRing,
   buildEnemyMech,
   buildEnergyCore,
   buildMissilePod,
+  buildMissionCore,
   buildPlayerMech,
+  buildRelayTower,
   type EnemyRig,
 } from "./models";
 import { DunefallAudio } from "./audio";
+import {
+  CHAPTERS,
+  type ChapterDef,
+  type RadioMessage,
+  type TacticalChoiceId,
+  applyTacticalChoice,
+  computeCampaignRank,
+  createFreshCampaignState,
+  getSpeakerPortraitSvg,
+  loadCampaignSave,
+  persistCampaignSave,
+  validateCampaignData,
+} from "./story";
 
 // ── 1. Renderer, Scene, Smart Integrated-GPU Auto-Detection & Bloom Pipeline ─
 const canvas = document.querySelector<HTMLCanvasElement>("#world")!;
@@ -56,26 +75,43 @@ const scene = new THREE.Scene();
 // Dusty mauve-amber desert storm atmospheric fog
 scene.fog = new THREE.FogExp2(0x7c6866, 0.0092);
 
-const pmrem = new THREE.PMREMGenerator(renderer);
-const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
-scene.environment = envRT.texture;
-scene.environmentIntensity = 0.52;
-pmrem.dispose();
+canvas.addEventListener("webglcontextlost", (e) => {
+  e.preventDefault();
+});
+
+try {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+  scene.environment = envRT.texture;
+  scene.environmentIntensity = 0.52;
+  pmrem.dispose();
+} catch {
+  // Fallback cleanly if GPU driver restricts PMREM FBOs
+}
 
 const camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.25, 320);
 
-const composer = new EffectComposer(renderer);
-composer.setPixelRatio(initDpr);
-composer.setSize(window.innerWidth, window.innerHeight);
-composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(
-  new THREE.Vector2(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2)),
-  0.34,
-  0.58,
-  0.82
-);
-composer.addPass(bloomPass);
-composer.addPass(new OutputPass());
+// Lazy-init Bloom postprocessing ONLY when High PBR mode is enabled (saves ~60MB VRAM on Eco / integrated GPUs!)
+let composer: EffectComposer | null = null;
+let bloomPass: UnrealBloomPass | null = null;
+function ensureComposer() {
+  if (composer) return composer;
+  const pr = Math.min(window.devicePixelRatio, 1.5);
+  composer = new EffectComposer(renderer);
+  composer.setPixelRatio(pr);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  composer.addPass(new RenderPass(scene, camera));
+  bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2)),
+    0.34,
+    0.58,
+    0.82
+  );
+  composer.addPass(bloomPass);
+  composer.addPass(new OutputPass());
+  return composer;
+}
+if (!ecoMode) ensureComposer();
 
 const studioControls = new OrbitControls(camera, renderer.domElement);
 studioControls.enableDamping = true;
@@ -204,12 +240,77 @@ type Enemy = {
   hp: number;
   maxHp: number;
   heavy: boolean;
+  isBoss?: boolean;
+  bossPhase?: 1 | 2;
+  barrageCd?: number;
+  solarCore?: THREE.Mesh;
+  overdriveAura?: THREE.Mesh;
   fireCd: number;
   walkCycle: number;
   strafeDir: number;
   hitFlash: number;
   hpEl: HTMLDivElement;
   fillEl: HTMLDivElement;
+};
+
+type MissionCore = {
+  rig: ReturnType<typeof buildMissionCore>;
+  x: number;
+  z: number;
+  bob: number;
+  label: string;
+  wpEl: HTMLDivElement;
+};
+
+type RelayTower = {
+  rig: ReturnType<typeof buildRelayTower>;
+  x: number;
+  z: number;
+  radius: number;
+  progress: number; // 0..100
+  captured: boolean;
+  label: string;
+  wpEl: HTMLDivElement;
+};
+
+type ConvoyHauler = {
+  rig: ReturnType<typeof buildConvoyHauler>;
+  x: number;
+  z: number;
+  yaw: number;
+  speed: number;
+  hp: number;
+  maxHp: number;
+  waypointIdx: number;
+  waypoints: [number, number][];
+  fireCd: number;
+  ambushSpawned: boolean;
+  wpEl: HTMLDivElement;
+};
+
+type ArtilleryPylon = {
+  id: number;
+  rig: ReturnType<typeof buildArtilleryPylon>;
+  x: number;
+  z: number;
+  hp: number;
+  maxHp: number;
+  fireCd: number;
+  hitFlash: number;
+  label: string;
+  hpEl: HTMLDivElement;
+  fillEl: HTMLDivElement;
+  wpEl: HTMLDivElement;
+};
+
+type DangerRing = {
+  rig: ReturnType<typeof buildDangerRing>;
+  x: number;
+  z: number;
+  radius: number;
+  timer: number;
+  maxTime: number;
+  damage: number;
 };
 
 type AllyCar = {
@@ -296,8 +397,42 @@ const projectiles: Projectile[] = [];
 const particles: Particle[] = [];
 const debris: DebrisChunk[] = [];
 
+// Story Mode dynamic entities
+const missionCores: MissionCore[] = [];
+const relayTowers: RelayTower[] = [];
+let convoy: ConvoyHauler | null = null;
+const artilleryPylons: ArtilleryPylon[] = [];
+const dangerRings: DangerRing[] = [];
+
 let nextEnemyId = 1;
+let nextPylonId = 1;
 let lockedEnemyId: number | null = null;
+
+// Story Mode & Campaign State
+let gameMode: "story" | "endless" = "story";
+let menuOpen = true;
+let campaignSave = loadCampaignSave();
+let selectedLaunchChapter = campaignSave.unlockedChapter;
+let campaign = createFreshCampaignState(0);
+let storyPhase = 0; // chapter sub-stage (0 = opening, 1 = mid-mission twist, 2 = cleared)
+let storyKillsNeeded = 0;
+let storyKillsCount = 0;
+let storyCoresCollected = 0;
+let storyCoresTotal = 0;
+let storyReinforceTimer = 0;
+let chapterTransitionTimer = 0;
+let pendingNextChapterIdx: number | null = null;
+let pendingVictory = false;
+let pendingBriefingChoice: TacticalChoiceId | null = null;
+
+// Radio Comms Queue (non-blocking diegetic headset)
+const radioQueue: RadioMessage[] = [];
+let activeRadio: RadioMessage | null = null;
+let radioTimer = 0;
+
+// Validate campaign data graph once at startup
+const storyErrs = validateCampaignData();
+if (storyErrs.length > 0) console.warn("Story validation warnings:", storyErrs);
 
 // ── 6. Zero-GC Pre-Allocated VFX, Projectile & Debris Pools (NO mid-fight GC or shader stalls!) ──
 const tracerGeo = new THREE.BoxGeometry(0.16, 0.16, 1.0);
@@ -317,7 +452,7 @@ function getProjMat(hex: number) {
   return m;
 }
 // Pre-warm all projectile colors
-for (const c of [0xffd27a, 0xf59e0b, 0x7dd3fc, 0xfef08a, 0xfb923c, 0xffb347, 0xff4040, 0x4ade80, 0x86efac]) {
+for (const c of [0xffd27a, 0xf59e0b, 0x7dd3fc, 0xfef08a, 0xfb923c, 0xffb347, 0xff4040, 0xff6b35, 0x4ade80, 0x86efac]) {
   getProjMat(c);
 }
 
@@ -559,8 +694,10 @@ function spawnProjectile(opts: {
 
 // ── 7. HUD Element References & Helpers ──────────────────────────────────────
 const enemyBarsEl = document.getElementById("enemy-bars")!;
+const worldWaypointsEl = document.getElementById("world-waypoints")!;
 const reticleEl = document.getElementById("reticle")!;
 const waveNumEl = document.getElementById("wave-num")!;
+const waveTitleEl = document.getElementById("wave-title")!;
 const waveSubEl = document.getElementById("wave-sub")!;
 const calloutEl = document.getElementById("callout")!;
 const plateFillEl = document.getElementById("plate-fill")!;
@@ -587,12 +724,57 @@ const perfBadgeEl = document.getElementById("perf-badge")!;
 const aimHintEl = document.getElementById("aim-hint")!;
 const settingsModal = document.getElementById("settings-modal")!;
 
-// Build cell pips & upgrade pips once
-for (let i = 0; i < player.maxCells; i++) {
-  const pip = document.createElement("div");
-  pip.className = "cell-pip";
-  cellsGridEl.appendChild(pip);
+// Story Mode HUD & Modal Refs
+const objectiveBarEl = document.getElementById("objective-bar")!;
+const objCodeEl = document.getElementById("obj-code")!;
+const objCounterEl = document.getElementById("obj-counter")!;
+const objTextEl = document.getElementById("obj-text")!;
+const objFillEl = document.getElementById("obj-fill")!;
+const objSubEl = document.getElementById("obj-sub")!;
+const bossBarEl = document.getElementById("boss-bar")!;
+const bossPhaseEl = document.getElementById("boss-phase")!;
+const bossFillEl = document.getElementById("boss-fill")!;
+const radioBoxEl = document.getElementById("radio-box")!;
+const radioPortraitEl = document.getElementById("radio-portrait")!;
+const radioCallsignEl = document.getElementById("radio-callsign")!;
+const radioRoleEl = document.getElementById("radio-role")!;
+const radioTextEl = document.getElementById("radio-text")!;
+const modeModal = document.getElementById("mode-modal")!;
+const chapterPillsEl = document.getElementById("chapter-pills")!;
+const storyProgressBadgeEl = document.getElementById("story-progress-badge")!;
+const btnLaunchStory = document.getElementById("btn-launch-story")!;
+const btnLaunchEndless = document.getElementById("btn-launch-endless")!;
+const briefingModal = document.getElementById("briefing-modal")!;
+const briefKickerEl = document.getElementById("brief-kicker")!;
+const briefSectorEl = document.getElementById("brief-sector")!;
+const briefSummaryEl = document.getElementById("brief-summary")!;
+const choiceSectionEl = document.getElementById("choice-section")!;
+const choiceGridEl = document.getElementById("choice-grid")!;
+const nextOpCodeEl = document.getElementById("next-op-code")!;
+const nextOpTitleEl = document.getElementById("next-op-title")!;
+const nextOpBriefEl = document.getElementById("next-op-brief")!;
+const nextOpHintEl = document.getElementById("next-op-hint")!;
+const btnDeployNext = document.getElementById("btn-deploy-next")!;
+const victoryModal = document.getElementById("victory-modal")!;
+const vicRankLetterEl = document.getElementById("vic-rank-letter")!;
+const vicScoreEl = document.getElementById("vic-score")!;
+const vicTimeEl = document.getElementById("vic-time")!;
+const vicKillsEl = document.getElementById("vic-kills")!;
+const vicRankEl = document.getElementById("vic-rank")!;
+const goTitleEl = document.getElementById("go-title")!;
+const goWaveLblEl = document.getElementById("go-wave-lbl")!;
+const btnPlayAgain = document.getElementById("btn-play-again")!;
+
+function rebuildCellPips() {
+  cellsGridEl.innerHTML = "";
+  for (let i = 0; i < player.maxCells; i++) {
+    const pip = document.createElement("div");
+    pip.className = "cell-pip";
+    cellsGridEl.appendChild(pip);
+  }
 }
+
+rebuildCellPips();
 for (const id of ["up-rail", "up-pods", "up-plate"]) {
   const el = document.getElementById(id)!;
   for (let i = 0; i < 5; i++) {
@@ -600,6 +782,71 @@ for (const id of ["up-rail", "up-pods", "up-plate"]) {
     p.className = "up-pip";
     el.appendChild(p);
   }
+}
+
+function enqueueRadio(messages: RadioMessage[], interrupt = false) {
+  if (interrupt) {
+    radioQueue.length = 0;
+    activeRadio = null;
+    radioTimer = 0;
+  }
+  for (const m of messages) radioQueue.push(m);
+  if (!activeRadio) advanceRadio();
+}
+
+function clearRadio() {
+  radioQueue.length = 0;
+  activeRadio = null;
+  radioTimer = 0;
+  radioBoxEl.classList.add("hidden");
+}
+
+function advanceRadio() {
+  const next = radioQueue.shift() ?? null;
+  activeRadio = next;
+  if (!next) {
+    radioBoxEl.classList.add("hidden");
+    return;
+  }
+  radioTimer = next.duration ?? 4.6;
+  radioBoxEl.className = `radio-box speaker-${next.speaker}`;
+  radioPortraitEl.innerHTML = getSpeakerPortraitSvg(next.speaker);
+  radioCallsignEl.textContent = next.callsign;
+  radioRoleEl.textContent = next.role;
+  radioTextEl.textContent = next.text;
+  audio.playRadioBeep(next.speaker);
+}
+
+radioBoxEl.addEventListener("click", (e) => {
+  e.stopPropagation();
+  advanceRadio();
+});
+
+function applyAtmosphere(atmo: ChapterDef["atmosphere"]) {
+  if (scene.fog instanceof THREE.FogExp2) {
+    scene.fog.color.setHex(atmo.fogColor);
+    scene.fog.density = atmo.fogDensity;
+  }
+  sun.color.setHex(atmo.sunColor);
+  sun.intensity = atmo.sunIntensity;
+  hemi.color.setHex(atmo.hemiSky);
+  hemi.groundColor.setHex(atmo.hemiGround);
+  skyMat.color.setHex(atmo.skyTint);
+}
+
+function makeWaypointEl(label: string, color: "amber" | "green" | "red"): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = `world-wp ${color}`;
+  el.innerHTML = `<span class="world-wp-tag">${label}</span><span class="world-wp-dot"></span>`;
+  worldWaypointsEl.appendChild(el);
+  return el;
+}
+
+function formatTime(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${rem < 10 ? "0" : ""}${rem}`;
 }
 
 let calloutTimer = 0;
@@ -624,50 +871,596 @@ function spawnCore(x: number, z: number) {
   energyCores.push({ rig, x, z, bob: Math.random() * Math.PI * 2 });
 }
 
+function spawnEnemyUnit(ex: number, ez: number, heavy: boolean, hpOverride?: number): Enemy {
+  const [sx, sz] = pushOutOfMesas(ex, ez, heavy ? 2.6 : 2.1);
+  const rig = buildEnemyMech(heavy);
+  rig.group.position.set(sx, getTerrainHeight(sx, sz), sz);
+  scene.add(rig.group);
+
+  const hpEl = document.createElement("div");
+  hpEl.className = "enemy-hp";
+  const fillEl = document.createElement("div");
+  fillEl.className = "fill";
+  hpEl.appendChild(fillEl);
+  enemyBarsEl.appendChild(hpEl);
+
+  const maxHp = hpOverride ?? (heavy ? 115 : 68);
+  const enemy: Enemy = {
+    id: nextEnemyId++,
+    rig,
+    x: sx,
+    z: sz,
+    yaw: Math.PI,
+    hp: maxHp,
+    maxHp,
+    heavy,
+    fireCd: 1.4 + Math.random() * 1.6,
+    walkCycle: Math.random() * 6,
+    strafeDir: Math.random() > 0.5 ? 1 : -1,
+    hitFlash: 0,
+    hpEl,
+    fillEl,
+  };
+  enemies.push(enemy);
+  return enemy;
+}
+
+function spawnBossSolaris(bx: number, bz: number): Enemy {
+  const [sx, sz] = pushOutOfMesas(bx, bz, 4.4);
+  const rig = buildBossMech();
+  rig.group.position.set(sx, getTerrainHeight(sx, sz), sz);
+  scene.add(rig.group);
+
+  // Hidden dummy bar (SOLARIS-0 uses the dramatic top-center #boss-bar!)
+  const hpEl = document.createElement("div");
+  hpEl.className = "enemy-hp";
+  hpEl.style.display = "none";
+  const fillEl = document.createElement("div");
+  hpEl.appendChild(fillEl);
+
+  const maxHp = 1180;
+  const boss: Enemy = {
+    id: nextEnemyId++,
+    rig,
+    x: sx,
+    z: sz,
+    yaw: Math.PI,
+    hp: maxHp,
+    maxHp,
+    heavy: true,
+    isBoss: true,
+    bossPhase: 1,
+    barrageCd: 5.0,
+    solarCore: rig.solarCore,
+    overdriveAura: rig.overdriveAura,
+    fireCd: 1.6,
+    walkCycle: 0,
+    strafeDir: 1,
+    hitFlash: 0,
+    hpEl,
+    fillEl,
+  };
+  enemies.push(boss);
+  lockedEnemyId = boss.id;
+  bossBarEl.classList.remove("hidden", "overdrive");
+  bossPhaseEl.textContent = "PHASE I";
+  bossFillEl.style.width = "100%";
+  audio.playBossSiren();
+  return boss;
+}
+
 function spawnWave(waveNum: number) {
   const count = Math.min(9, 4 + waveNum);
   for (let i = 0; i < count; i++) {
     const heavy = waveNum >= 2 && i % 3 === 0;
-    const rig = buildEnemyMech(heavy);
-    // Fan out along the distant northern dunes (just like poster.jpg!)
     const spreadAng = ((i / Math.max(1, count - 1)) - 0.5) * 1.35;
     const dist = 46 + Math.random() * 24;
     const ex = Math.sin(spreadAng) * dist;
     const ez = -Math.cos(spreadAng) * dist + 10;
-    const ey = getTerrainHeight(ex, ez);
-    rig.group.position.set(ex, ey, ez);
-    scene.add(rig.group);
-
-    const hpEl = document.createElement("div");
-    hpEl.className = "enemy-hp";
-    const fillEl = document.createElement("div");
-    fillEl.className = "fill";
-    hpEl.appendChild(fillEl);
-    enemyBarsEl.appendChild(hpEl);
-
     const maxHp = (heavy ? 115 : 68) + (waveNum - 1) * 16;
-    enemies.push({
-      id: nextEnemyId++,
-      rig,
-      x: ex,
-      z: ez,
-      yaw: Math.PI,
-      hp: maxHp,
-      maxHp,
-      heavy,
-      fireCd: 1.4 + Math.random() * 1.8,
-      walkCycle: Math.random() * 6,
-      strafeDir: i % 2 === 0 ? 1 : -1,
-      hitFlash: 0,
-      hpEl,
-      fillEl,
-    });
+    spawnEnemyUnit(ex, ez, heavy, maxHp);
   }
   if (enemies.length > 0) lockedEnemyId = enemies[Math.floor(enemies.length / 2)].id;
   const label = WAVE_TITLES[(waveNum - 1) % WAVE_TITLES.length];
   waveNumEl.textContent = String(waveNum);
+  waveTitleEl.textContent = "DUNEFALL";
   waveSubEl.textContent = `${label} · ${enemies.length} on the field`;
   showCallout(`WAVE ${waveNum} // ${label.toUpperCase()}`);
+}
+
+function clearStoryEntities() {
+  for (const mc of missionCores) {
+    scene.remove(mc.rig.group);
+    mc.wpEl.remove();
+  }
+  missionCores.length = 0;
+  for (const rt of relayTowers) {
+    scene.remove(rt.rig.group);
+    rt.wpEl.remove();
+  }
+  relayTowers.length = 0;
+  if (convoy) {
+    scene.remove(convoy.rig.group);
+    convoy.wpEl.remove();
+    convoy = null;
+  }
+  for (const py of artilleryPylons) {
+    scene.remove(py.rig.group);
+    py.hpEl.remove();
+    py.wpEl.remove();
+  }
+  artilleryPylons.length = 0;
+  for (const dr of dangerRings) scene.remove(dr.rig.group);
+  dangerRings.length = 0;
+  worldWaypointsEl.innerHTML = "";
+  bossBarEl.classList.add("hidden");
+  bossBarEl.classList.remove("overdrive");
+  chapterTransitionTimer = 0;
+  pendingNextChapterIdx = null;
+  pendingVictory = false;
+}
+
+function spawnMissionCore(x: number, z: number, label: string) {
+  const [sx, sz] = pushOutOfMesas(x, z, 2.5);
+  const rig = buildMissionCore();
+  rig.group.position.set(sx, getTerrainHeight(sx, sz), sz);
+  scene.add(rig.group);
+  missionCores.push({
+    rig,
+    x: sx,
+    z: sz,
+    bob: Math.random() * Math.PI * 2,
+    label,
+    wpEl: makeWaypointEl(label, "green"),
+  });
+}
+
+function spawnRelayTower(x: number, z: number, label: string) {
+  const [sx, sz] = pushOutOfMesas(x, z, 5.5);
+  const radius = 12;
+  const rig = buildRelayTower(radius);
+  rig.group.position.set(sx, getTerrainHeight(sx, sz), sz);
+  scene.add(rig.group);
+  relayTowers.push({
+    rig,
+    x: sx,
+    z: sz,
+    radius,
+    progress: 0,
+    captured: false,
+    label,
+    wpEl: makeWaypointEl(label, "amber"),
+  });
+}
+
+function spawnConvoyHauler() {
+  const startX = 0;
+  const startZ = 40;
+  const rig = buildConvoyHauler();
+  rig.group.position.set(startX, getTerrainHeight(startX, startZ), startZ);
+  scene.add(rig.group);
+  convoy = {
+    rig,
+    x: startX,
+    z: startZ,
+    yaw: 0,
+    speed: 0,
+    hp: 360,
+    maxHp: 360,
+    waypointIdx: 0,
+    waypoints: [
+      [-14, 12],
+      [15, -18],
+      [0, -56],
+    ],
+    fireCd: 1.0,
+    ambushSpawned: false,
+    wpEl: makeWaypointEl("ATLAS-6", "green"),
+  };
+}
+
+function spawnArtilleryPylon(x: number, z: number, label: string) {
+  const [sx, sz] = pushOutOfMesas(x, z, 5.0);
+  const rig = buildArtilleryPylon();
+  rig.group.position.set(sx, getTerrainHeight(sx, sz), sz);
+  scene.add(rig.group);
+
+  const hpEl = document.createElement("div");
+  hpEl.className = "enemy-hp";
+  const fillEl = document.createElement("div");
+  fillEl.className = "fill";
+  hpEl.appendChild(fillEl);
+  enemyBarsEl.appendChild(hpEl);
+
+  artilleryPylons.push({
+    id: nextPylonId++,
+    rig,
+    x: sx,
+    z: sz,
+    hp: 260,
+    maxHp: 260,
+    fireCd: 2.2 + Math.random() * 1.8,
+    hitFlash: 0,
+    label,
+    hpEl,
+    fillEl,
+    wpEl: makeWaypointEl(label, "red"),
+  });
+}
+
+function spawnDangerRing(x: number, z: number, radius = 6.5, delay = 1.75, damage = 28) {
+  if (dangerRings.length >= 8) return;
+  const rig = buildDangerRing(radius);
+  rig.group.position.set(x, getTerrainHeight(x, z), z);
+  scene.add(rig.group);
+  dangerRings.push({ rig, x, z, radius, timer: 0, maxTime: delay, damage });
+  audio.playArtilleryWarning();
+}
+
+function updateStoryObjectiveHUD(text: string, counter: string, pct: number, sub = "") {
+  const ch = CHAPTERS[campaign.chapterIdx];
+  objCodeEl.textContent = `${ch.code} · ${ch.title}`;
+  objTextEl.textContent = text;
+  objCounterEl.textContent = counter;
+  objFillEl.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  objSubEl.textContent = sub;
+}
+
+function clearDynamicWorld() {
+  for (const e of enemies) {
+    scene.remove(e.rig.group);
+    e.hpEl.remove();
+  }
+  enemies.length = 0;
+  for (const c of allyCars) scene.remove(c.rig.group);
+  allyCars.length = 0;
+  for (const d of allyDrones) scene.remove(d.mesh);
+  allyDrones.length = 0;
+  for (const p of missilePods) scene.remove(p.rig.group);
+  missilePods.length = 0;
+  for (const co of energyCores) scene.remove(co.rig.group);
+  energyCores.length = 0;
+  for (const pr of projectiles) releaseProjectile(pr);
+  projectiles.length = 0;
+  for (const pt of particles) releaseParticle(pt);
+  particles.length = 0;
+  for (const db of debris) releaseDebris(db);
+  debris.length = 0;
+  clearStoryEntities();
+  terrain.clearCraters();
+  terrain.spawnCrater(1.5, -12, 3.6);
+  terrain.spawnCrater(-9, -24, 2.8);
+}
+
+function renderModeMenu() {
+  campaignSave = loadCampaignSave();
+  storyProgressBadgeEl.textContent = campaignSave.completed
+    ? `CLEARED · BEST RANK ${campaignSave.bestRank || "A"}`
+    : campaignSave.unlockedChapter > 0
+      ? `PROGRESS: CH ${campaignSave.unlockedChapter + 1} / ${CHAPTERS.length}`
+      : "5 CHAPTERS · BOSS FINALE";
+
+  chapterPillsEl.innerHTML = "";
+  CHAPTERS.forEach((ch, idx) => {
+    const cleared = campaignSave.completed || idx < campaignSave.unlockedChapter;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `ch-pill${idx === selectedLaunchChapter ? " selected" : ""}`;
+    btn.dataset.chapter = String(idx);
+    btn.textContent = `${cleared ? "✓ " : ""}CH ${ch.number} · ${ch.title}`;
+    btn.addEventListener("click", () => {
+      selectedLaunchChapter = idx;
+      renderModeMenu();
+    });
+    chapterPillsEl.appendChild(btn);
+  });
+
+  const sel = CHAPTERS[selectedLaunchChapter];
+  btnLaunchStory.textContent =
+    selectedLaunchChapter === 0 && campaignSave.unlockedChapter === 0
+      ? "Start Story Campaign"
+      : `Deploy Ch. ${sel.number}: ${sel.title}`;
+}
+
+function openModeMenu() {
+  menuOpen = true;
+  player.paused = true;
+  firing = false;
+  bracing = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+  settingsModal.classList.add("hidden");
+  gameOverModal.classList.add("hidden");
+  briefingModal.classList.add("hidden");
+  victoryModal.classList.add("hidden");
+  renderModeMenu();
+  modeModal.classList.remove("hidden");
+}
+
+function startStoryChapter(chapterIdx: number, resetCampaignStats = false) {
+  audio.unlock();
+  gameMode = "story";
+  menuOpen = false;
+  modeModal.classList.add("hidden");
+  briefingModal.classList.add("hidden");
+  victoryModal.classList.add("hidden");
+  gameOverModal.classList.add("hidden");
+  settingsModal.classList.add("hidden");
+  player.paused = false;
+  player.studioMode = false;
+  studioControls.enabled = false;
+
+  if (resetCampaignStats) {
+    campaign = createFreshCampaignState(chapterIdx);
+    player.score = 0;
+    player.kills = 0;
+    player.shots = 0;
+    player.tier = Math.min(3, 1 + Math.floor(chapterIdx / 2));
+    player.cores = 0;
+    player.coresNeeded = 4 + player.tier;
+    player.upRail = player.tier;
+    player.upPods = player.tier;
+    player.upPlate = player.tier;
+  } else {
+    campaign.chapterIdx = chapterIdx;
+    campaign.chapterTime = 0;
+  }
+
+  const ch = CHAPTERS[campaign.chapterIdx];
+  clearDynamicWorld();
+  clearRadio();
+  applyAtmosphere(ch.atmosphere);
+
+  const maxHull = 140 + (player.tier - 1) * 20 + campaign.bonusHull;
+  const maxPlate = 100 + (player.tier - 1) * 15 + campaign.bonusPlate;
+  const maxCells = 6 + campaign.bonusCells;
+
+  Object.assign(player, {
+    x: 0,
+    z: ch.objectiveType === "escort_convoy" ? 48 : 16,
+    vx: 0,
+    vz: 0,
+    yaw: 0,
+    camYaw: 0,
+    camPitch: 0.42,
+    camZoom: 16.5,
+    morph: 0,
+    targetMorph: 0,
+    siege: 0,
+    stance: "strider",
+    hull: maxHull,
+    maxHull,
+    plate: maxPlate,
+    maxPlate,
+    heat: 0,
+    overheated: false,
+    cells: maxCells,
+    maxCells,
+    fireCd: 0,
+    missileCd: 0,
+    squadCd: 0,
+    podCd: 0,
+    dashTimer: 0,
+    wave: ch.number,
+    trauma: 0,
+    hitStop: 0,
+  });
+  rebuildCellPips();
+
+  storyPhase = 0;
+  storyKillsNeeded = 0;
+  storyKillsCount = 0;
+  storyCoresCollected = 0;
+  storyCoresTotal = 0;
+  storyReinforceTimer = 10;
+
+  // Story HUD mode
+  objectiveBarEl.classList.remove("hidden");
+  waveNumEl.textContent = `C${ch.number}`;
+  waveTitleEl.textContent = ch.title;
+  waveSubEl.textContent = `${ch.sector} · ${ch.code}`;
+
+  // Allied wingman car beside player in Chapters 1–4
+  if (ch.objectiveType !== "boss_solaris") {
+    spawnAllyCarAt(player.x + 7.5, player.z - 2, 999);
+  }
+  spawnCore(-11.5, player.z - 3);
+
+  // Chapter-specific 3D mission setup
+  if (ch.objectiveType === "recon_and_cores") {
+    storyKillsNeeded = 5;
+    for (let i = 0; i < 5; i++) {
+      const ang = ((i / 4) - 0.5) * 1.25;
+      const dist = 42 + (i % 2) * 14;
+      spawnEnemyUnit(Math.sin(ang) * dist, -Math.cos(ang) * dist + 14, i === 2, i === 2 ? 96 : 62);
+    }
+    updateStoryObjectiveHUD("Eliminate Crimson Recon Vanguard", "0 / 5", 0, "Press [Q] to lock targets · [LMB] to fire");
+  } else if (ch.objectiveType === "capture_relays") {
+    spawnRelayTower(-30, -24, "RELAY A");
+    spawnRelayTower(32, -38, "RELAY B");
+    spawnEnemyUnit(-24, -36, false, 74);
+    spawnEnemyUnit(-36, -16, false, 74);
+    spawnEnemyUnit(28, -48, true, 125);
+    spawnEnemyUnit(36, -26, false, 74);
+    updateStoryObjectiveHUD("Capture Helios Relay Towers", "0 / 2", 0, "Stand inside glowing perimeter rings to upload");
+  } else if (ch.objectiveType === "escort_convoy") {
+    spawnConvoyHauler();
+    spawnEnemyUnit(-20, 4, false, 74);
+    spawnEnemyUnit(22, -2, false, 74);
+    spawnEnemyUnit(-6, -18, true, 125);
+    updateStoryObjectiveHUD("Escort ATLAS-6 to Extraction Gate", "0%", 0, "Stay within 24m of ATLAS-6 for Escort Boost");
+  } else if (ch.objectiveType === "destroy_pylons") {
+    spawnArtilleryPylon(-32, -26, "PYLON 1");
+    spawnArtilleryPylon(34, -22, "PYLON 2");
+    spawnArtilleryPylon(0, -58, "PYLON 3");
+    spawnEnemyUnit(-22, -34, false, 78);
+    spawnEnemyUnit(26, -32, false, 78);
+    spawnEnemyUnit(-8, -48, true, 132);
+    spawnEnemyUnit(12, -46, false, 78);
+    updateStoryObjectiveHUD("Destroy Crimson Artillery Pylons", "0 / 3", 0, "Dodge red ground impact rings · [K]/[L] deal heavy damage");
+  } else if (ch.objectiveType === "boss_solaris") {
+    spawnBossSolaris(0, -46);
+    spawnEnemyUnit(-20, -38, false, 76);
+    spawnEnemyUnit(20, -38, false, 76);
+    spawnCore(14, 10);
+    updateStoryObjectiveHUD("Defeat Warden Vex in SOLARIS-0", "100% HP", 0, "Break SOLARIS-0 below 50% HP to expose Solar Overdrive");
+  }
+
+  if (enemies.length > 0 && !lockedEnemyId) lockedEnemyId = enemies[0].id;
+  updateWeaponSlotsUI();
+  updateStanceButtonsUI();
+  showCallout(`${ch.code} // ${ch.title}`);
+  enqueueRadio(ch.introComms, true);
+}
+
+function startEndlessMode() {
+  audio.unlock();
+  gameMode = "endless";
+  menuOpen = false;
+  modeModal.classList.add("hidden");
+  briefingModal.classList.add("hidden");
+  victoryModal.classList.add("hidden");
+  gameOverModal.classList.add("hidden");
+  settingsModal.classList.add("hidden");
+  player.paused = false;
+  objectiveBarEl.classList.add("hidden");
+  bossBarEl.classList.add("hidden");
+  clearRadio();
+  applyAtmosphere(CHAPTERS[0].atmosphere);
+  resetBattlefield();
+}
+
+function openChapterBriefing(clearedIdx: number, nextIdx: number) {
+  const cleared = CHAPTERS[clearedIdx];
+  const next = CHAPTERS[nextIdx];
+  player.paused = true;
+  firing = false;
+  bracing = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+
+  briefKickerEl.textContent = `${cleared.code} COMPLETE // ${cleared.title}`;
+  briefSectorEl.textContent = next.sector.toUpperCase();
+  briefSummaryEl.textContent = `+500 OP BONUS · TOTAL SCORE ${player.score.toLocaleString()} · TIME ${formatTime(campaign.chapterTime)}`;
+
+  nextOpCodeEl.textContent = `NEXT OP // ${next.code}`;
+  nextOpTitleEl.textContent = next.title;
+  nextOpBriefEl.textContent = next.briefing;
+  nextOpHintEl.textContent = `TACTICAL TIP: ${next.hint}`;
+
+  pendingBriefingChoice = null;
+  choiceGridEl.innerHTML = "";
+  if (cleared.debriefChoices) {
+    choiceSectionEl.classList.remove("hidden");
+    cleared.debriefChoices.forEach((choice, idx) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = `choice-card${idx === 0 ? " picked" : ""}`;
+      if (idx === 0) pendingBriefingChoice = choice.id;
+      card.innerHTML = `<span class="choice-tag">${choice.tag}</span><div class="choice-title">${choice.title}</div><div class="choice-effect">${choice.effectText}</div>`;
+      card.addEventListener("click", () => {
+        pendingBriefingChoice = choice.id;
+        choiceGridEl.querySelectorAll(".choice-card").forEach((c) => c.classList.remove("picked"));
+        card.classList.add("picked");
+        audio.playDeploy();
+      });
+      choiceGridEl.appendChild(card);
+    });
+  } else {
+    choiceSectionEl.classList.add("hidden");
+  }
+
+  btnDeployNext.textContent = `Deploy ${next.code}: ${next.title}`;
+  briefingModal.classList.remove("hidden");
+}
+
+function submitStartNgStats(targetRankEl: HTMLElement) {
+  const runStats = {
+    score: Math.max(0, Math.round(player.score)),
+    waves: Math.max(1, Math.round(gameMode === "story" ? CHAPTERS[campaign.chapterIdx].number : player.wave)),
+    kills: Math.max(0, Math.round(player.kills)),
+  };
+  targetRankEl.textContent = "Saving run to start.ng leaderboard...";
+  const kit = (window as unknown as { startng?: StartNgKit }).startng;
+  if (kit?.saveRun) {
+    kit
+      .saveRun(runStats)
+      .then((res) => {
+        if (res?.ok && res.result) {
+          targetRankEl.textContent = `Leaderboard Rank #${res.result.rank ?? "-"} · Best ${res.result.best ?? runStats.score}`;
+        } else {
+          targetRankEl.textContent = "Sign in on start.ng to save your best run to the leaderboard.";
+        }
+      })
+      .catch(() => {
+        targetRankEl.textContent = "Sign in on start.ng to save your best run to the leaderboard.";
+      });
+  } else {
+    targetRankEl.textContent = "Play on start.ng to save your best run to the global leaderboard.";
+  }
+}
+
+function showVictoryScreen() {
+  player.paused = true;
+  firing = false;
+  bracing = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+
+  const rank = computeCampaignRank(player.score, campaign.deaths, campaign.totalTime);
+  campaignSave.completed = true;
+  campaignSave.unlockedChapter = CHAPTERS.length - 1;
+  if (player.score > campaignSave.bestScore) {
+    campaignSave.bestScore = Math.round(player.score);
+    campaignSave.bestRank = rank;
+  }
+  persistCampaignSave(campaignSave);
+
+  vicRankLetterEl.textContent = rank;
+  vicScoreEl.textContent = player.score.toLocaleString();
+  vicTimeEl.textContent = formatTime(campaign.totalTime);
+  vicKillsEl.textContent = String(player.kills);
+  victoryModal.classList.remove("hidden");
+  submitStartNgStats(vicRankEl);
+}
+
+function completeStoryChapter() {
+  if (storyPhase >= 2) return;
+  storyPhase = 2;
+  const ch = CHAPTERS[campaign.chapterIdx];
+  player.score += ch.index === 4 ? 1500 : 500;
+  audio.playObjectiveComplete();
+  showCallout(`${ch.code} CLEARED // ${ch.title}`);
+  enqueueRadio(ch.clearComms, true);
+
+  if (campaign.chapterIdx + 1 < CHAPTERS.length) {
+    const nextIdx = campaign.chapterIdx + 1;
+    if (nextIdx > campaignSave.unlockedChapter) {
+      campaignSave.unlockedChapter = nextIdx;
+      persistCampaignSave(campaignSave);
+    }
+    pendingNextChapterIdx = nextIdx;
+    chapterTransitionTimer = 2.4;
+  } else {
+    pendingVictory = true;
+    chapterTransitionTimer = 2.8;
+  }
+}
+
+function failStoryChapter(reasonTitle: string) {
+  if (player.paused) return;
+  campaign.deaths += 1;
+  player.paused = true;
+  firing = false;
+  bracing = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+
+  const ch = CHAPTERS[campaign.chapterIdx];
+  goTitleEl.textContent = reasonTitle;
+  goWaveLblEl.textContent = "CHAPTER";
+  goScoreEl.textContent = Math.round(player.score).toLocaleString();
+  goWaveEl.textContent = `${ch.number} / 5`;
+  goKillsEl.textContent = String(player.kills);
+  btnPlayAgain.textContent = `Retry Ch. ${ch.number}: ${ch.title}`;
+  gameOverModal.classList.remove("hidden");
+  submitStartNgStats(goRankEl);
 }
 
 function spawnAllyCarAt(x: number, z: number, life = 38) {
@@ -690,7 +1483,8 @@ function deploySupportSquad() {
   if (player.squadCd > 0) return;
   audio.unlock();
   audio.playDeploy();
-  player.squadCd = Math.max(18, 30 - player.upPods * 2.5);
+  const cdMult = gameMode === "story" ? campaign.cooldownMult : 1;
+  player.squadCd = Math.max(12, (30 - player.upPods * 2.5) * cdMult);
 
   // Deploy 3 allied 6-wheel cars + 2 hover combat drones!
   for (let i = 0; i < 3; i++) {
@@ -716,7 +1510,8 @@ function deployMissilePod() {
   if (player.podCd > 0) return;
   audio.unlock();
   audio.playDeploy();
-  player.podCd = Math.max(16, 26 - player.upPods * 2);
+  const cdMult = gameMode === "story" ? campaign.cooldownMult : 1;
+  player.podCd = Math.max(10, (26 - player.upPods * 2) * cdMult);
 
   const px = player.x + Math.cos(player.yaw) * 4.5;
   const pz = player.z - Math.sin(player.yaw) * 4.5;
@@ -729,29 +1524,12 @@ function deployMissilePod() {
 }
 
 function resetBattlefield() {
-  // Clear all dynamic entities
-  for (const e of enemies) {
-    scene.remove(e.rig.group);
-    e.hpEl.remove();
+  if (gameMode === "story" && !menuOpen) {
+    startStoryChapter(campaign.chapterIdx, false);
+    return;
   }
-  enemies.length = 0;
-  for (const c of allyCars) scene.remove(c.rig.group);
-  allyCars.length = 0;
-  for (const d of allyDrones) scene.remove(d.mesh);
-  allyDrones.length = 0;
-  for (const p of missilePods) scene.remove(p.rig.group);
-  missilePods.length = 0;
-  for (const co of energyCores) scene.remove(co.rig.group);
-  energyCores.length = 0;
-  for (const pr of projectiles) releaseProjectile(pr);
-  projectiles.length = 0;
-  for (const pt of particles) releaseParticle(pt);
-  particles.length = 0;
-  for (const db of debris) releaseDebris(db);
-  debris.length = 0;
-  terrain.clearCraters();
-  terrain.spawnCrater(1.5, -12, 3.6);
-  terrain.spawnCrater(-9, -24, 2.8);
+  clearDynamicWorld();
+  clearRadio();
 
   Object.assign(player, {
     x: 0,
@@ -774,6 +1552,7 @@ function resetBattlefield() {
     heat: 0,
     overheated: false,
     cells: 6,
+    maxCells: 6,
     fireCd: 0,
     missileCd: 0,
     squadCd: 0,
@@ -792,6 +1571,7 @@ function resetBattlefield() {
     trauma: 0,
     hitStop: 0,
   });
+  rebuildCellPips();
 
   // Iconic opening scene: 1 wingman 6-wheel green-core car right beside you + 1 green Core on the left flank!
   spawnAllyCarAt(7.2, 10.4, 999);
@@ -901,6 +1681,9 @@ function triggerSideRoll(dirSign: -1 | 1) {
 }
 
 function toggleSettings(force?: boolean) {
+  if (menuOpen || !briefingModal.classList.contains("hidden") || !victoryModal.classList.contains("hidden") || !gameOverModal.classList.contains("hidden")) {
+    return;
+  }
   const open = force ?? settingsModal.classList.contains("hidden");
   settingsModal.classList.toggle("hidden", !open);
   player.paused = open;
@@ -1009,6 +1792,29 @@ btnStudio.addEventListener("click", () => {
   }
   updateStanceButtonsUI();
 });
+document.getElementById("btn-modes")!.addEventListener("click", openModeMenu);
+document.getElementById("btn-modal-modes")!.addEventListener("click", openModeMenu);
+document.getElementById("btn-go-modes")!.addEventListener("click", openModeMenu);
+btnLaunchStory.addEventListener("click", () => startStoryChapter(selectedLaunchChapter, true));
+btnLaunchEndless.addEventListener("click", startEndlessMode);
+btnDeployNext.addEventListener("click", () => {
+  const cleared = CHAPTERS[campaign.chapterIdx];
+  const nextIdx = pendingNextChapterIdx ?? Math.min(CHAPTERS.length - 1, campaign.chapterIdx + 1);
+  let choiceResp: RadioMessage | null = null;
+  if (pendingBriefingChoice && cleared.debriefChoices) {
+    applyTacticalChoice(campaign, pendingBriefingChoice);
+    const chosen = cleared.debriefChoices.find((c) => c.id === pendingBriefingChoice);
+    if (chosen) choiceResp = chosen.response;
+  }
+  pendingNextChapterIdx = null;
+  pendingBriefingChoice = null;
+  startStoryChapter(nextIdx, false);
+  if (choiceResp) enqueueRadio([choiceResp], false);
+});
+document.getElementById("btn-vic-endless")!.addEventListener("click", startEndlessMode);
+document.getElementById("btn-vic-replay")!.addEventListener("click", () => startStoryChapter(0, true));
+document.getElementById("btn-vic-share")!.addEventListener("click", shareOnX);
+
 document.getElementById("btn-restart")!.addEventListener("click", resetBattlefield);
 document.getElementById("btn-modal-restart")!.addEventListener("click", () => {
   resetBattlefield();
@@ -1047,7 +1853,12 @@ function shareOnX() {
   const gameUrl = location.hostname.endsWith(".start.ng")
     ? `https://start.ng/games/${location.hostname.replace(/\.start\.ng$/, "")}`
     : location.href;
-  const text = `I reached Wave ${player.wave} with ${player.score.toLocaleString()} pts (${player.kills} mechs destroyed) in DUNEFALL on start.ng! Can you beat my score?`;
+  const text =
+    gameMode === "story" && !victoryModal.classList.contains("hidden")
+      ? `I defeated Warden Vex (SOLARIS-0) with Rank ${vicRankLetterEl.textContent} and ${player.score.toLocaleString()} pts in DUNEFALL Story Campaign on start.ng!`
+      : gameMode === "story"
+        ? `Fighting through Chapter ${CHAPTERS[campaign.chapterIdx].number} (${CHAPTERS[campaign.chapterIdx].title}) with ${player.score.toLocaleString()} pts in DUNEFALL on start.ng!`
+        : `I reached Wave ${player.wave} with ${player.score.toLocaleString()} pts (${player.kills} mechs destroyed) in DUNEFALL on start.ng! Can you beat my score?`;
   const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(gameUrl)}`;
   window.open(url, "_blank", "noopener");
 }
@@ -1190,7 +2001,8 @@ function flipGraphicsPreset() {
   ecoMode = !ecoMode;
   const pr = ecoMode ? 1.0 : Math.min(window.devicePixelRatio, 1.5);
   renderer.setPixelRatio(pr);
-  composer.setPixelRatio(pr);
+  if (!ecoMode) ensureComposer();
+  composer?.setPixelRatio(pr);
   sun.shadow.mapSize.set(ecoMode ? 1024 : 2048, ecoMode ? 1024 : 2048);
   sun.shadow.map?.dispose();
   sun.shadow.map = null;
@@ -1217,8 +2029,8 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize(window.innerWidth, window.innerHeight);
-  bloomPass.setSize(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2));
+  if (composer) composer.setSize(window.innerWidth, window.innerHeight);
+  if (bloomPass) bloomPass.setSize(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2));
 });
 
 // ── 10. Helpers: Target Lock, Damage & Solid Collision Push-Out ──────────────
@@ -1247,16 +2059,88 @@ function pushOutOfMesas(x: number, z: number, radius: number): [number, number] 
   return [x, z];
 }
 
+function damagePylon(py: ArtilleryPylon, amount: number) {
+  const pierce = gameMode === "story" ? campaign.armorPierceMult : 1;
+  py.hp -= amount * pierce;
+  py.hitFlash = 0.12;
+  if (py.hp <= 0) {
+    const gy = getTerrainHeight(py.x, py.z);
+    spawnExplosion(py.x, gy + 1.5, py.z, true);
+    audio.playHit(true);
+    player.kills += 1;
+    player.score += 320;
+    spawnCore(py.x, py.z);
+
+    scene.remove(py.rig.group);
+    py.hpEl.remove();
+    py.wpEl.remove();
+    const idx = artilleryPylons.indexOf(py);
+    if (idx !== -1) artilleryPylons.splice(idx, 1);
+
+    const destroyed = 3 - artilleryPylons.length;
+    updateStoryObjectiveHUD(
+      "Destroy Crimson Artillery Pylons",
+      `${destroyed} / 3`,
+      (destroyed / 3) * 100,
+      artilleryPylons.length > 0 ? `${artilleryPylons.length} siege pylon(s) still firing` : "All siege pylons neutralized!"
+    );
+
+    if (artilleryPylons.length === 1 && storyPhase === 0) {
+      storyPhase = 1;
+      enqueueRadio(CHAPTERS[3].twistComms, true);
+      spawnEnemyUnit(artilleryPylons[0].x - 10, artilleryPylons[0].z + 10, true, 136);
+      spawnEnemyUnit(artilleryPylons[0].x + 10, artilleryPylons[0].z + 10, true, 136);
+      showCallout("CRIMSON HEAVY BREACHERS INBOUND");
+    } else if (artilleryPylons.length === 0) {
+      completeStoryChapter();
+    }
+  } else {
+    audio.playHit(false);
+  }
+}
+
 function damageEnemy(e: Enemy, amount: number) {
-  e.hp -= amount;
+  const pierce = gameMode === "story" && (e.heavy || e.isBoss) ? campaign.armorPierceMult : 1;
+  e.hp -= amount * pierce;
   e.hitFlash = 0.12;
+
+  // Boss SOLARIS-0 Phase 2 Trigger (SOLAR OVERDRIVE at 50% HP!)
+  if (e.isBoss && e.bossPhase === 1 && e.hp > 0 && e.hp <= e.maxHp * 0.5) {
+    e.bossPhase = 2;
+    storyPhase = 1;
+    player.hitStop = 0.2;
+    player.trauma = Math.min(1, player.trauma + 0.85);
+    audio.playBossSiren();
+    spawnExplosion(e.x, getTerrainHeight(e.x, e.z) + 3.0, e.z, true);
+    bossBarEl.classList.add("overdrive");
+    bossPhaseEl.textContent = "SOLAR OVERDRIVE";
+    // Vanguard-OS overrides limiters: full cells + cooldown reset!
+    player.cells = player.maxCells;
+    player.squadCd = Math.min(player.squadCd, 2);
+    player.podCd = Math.min(player.podCd, 2);
+    spawnEnemyUnit(e.x - 14, e.z + 10, false, 78);
+    spawnEnemyUnit(e.x + 14, e.z + 10, false, 78);
+    showCallout("WARDEN VEX // SOLAR OVERDRIVE ENGAGED!");
+    enqueueRadio(CHAPTERS[4].twistComms, true);
+  }
+
   if (e.hp <= 0) {
     const ey = getTerrainHeight(e.x, e.z);
     spawnExplosion(e.x, ey, e.z, true);
     audio.playHit(true);
     player.kills += 1;
-    player.score += e.heavy ? 250 : 140;
+    player.score += e.isBoss ? 2200 : e.heavy ? 250 : 140;
     spawnCore(e.x, e.z);
+
+    if (e.isBoss) {
+      // Dramatic multi-explosion dreadnought finisher!
+      player.hitStop = 0.28;
+      player.trauma = 1.0;
+      bossFillEl.style.width = "0%";
+      spawnExplosion(e.x - 2.6, ey + 3.2, e.z + 1.5, true);
+      spawnExplosion(e.x + 2.4, ey + 2.5, e.z - 1.8, true);
+      window.setTimeout(() => spawnExplosion(e.x, ey + 4.0, e.z, true), 260);
+    }
 
     scene.remove(e.rig.group);
     e.hpEl.remove();
@@ -1267,13 +2151,44 @@ function damageEnemy(e: Enemy, amount: number) {
       lockedEnemyId = enemies[0]?.id ?? null;
     }
 
-    if (enemies.length === 0) {
-      player.wave += 1;
-      player.hull = Math.min(player.maxHull, player.hull + 30);
-      spawnWave(player.wave);
+    if (gameMode === "story") {
+      const ch = CHAPTERS[campaign.chapterIdx];
+      if (ch.objectiveType === "recon_and_cores" && storyPhase === 0) {
+        storyKillsCount += 1;
+        updateStoryObjectiveHUD(
+          "Eliminate Crimson Recon Vanguard",
+          `${storyKillsCount} / ${storyKillsNeeded}`,
+          (storyKillsCount / Math.max(1, storyKillsNeeded)) * 100,
+          "Clear all scouts to decrypt their relay core coordinates"
+        );
+        if (enemies.length === 0) {
+          storyPhase = 1;
+          storyCoresCollected = 0;
+          storyCoresTotal = 3;
+          spawnMissionCore(-34, -22, "CORE A");
+          spawnMissionCore(32, -32, "CORE B");
+          spawnMissionCore(-4, -56, "CORE C");
+          spawnEnemyUnit(-28, -42, false, 64);
+          spawnEnemyUnit(28, -44, false, 64);
+          spawnEnemyUnit(0, -64, true, 110);
+          updateStoryObjectiveHUD("Recover 3 Helios Relay Cores", "0 / 3", 0, "Morph to Car [T] to sprint between emerald beacons!");
+          showCallout("MID-MISSION TWIST // RECOVER 3 RELAY CORES");
+          enqueueRadio(ch.twistComms, true);
+        }
+      } else if (e.isBoss) {
+        bossBarEl.classList.add("hidden");
+        updateStoryObjectiveHUD("SOLARIS-0 Neutralized!", "COMPLETE", 100, "Sector 09 secured!");
+        completeStoryChapter();
+      }
     } else {
-      const label = WAVE_TITLES[(player.wave - 1) % WAVE_TITLES.length];
-      waveSubEl.textContent = `${label} · ${enemies.length} on the field`;
+      if (enemies.length === 0) {
+        player.wave += 1;
+        player.hull = Math.min(player.maxHull, player.hull + 30);
+        spawnWave(player.wave);
+      } else {
+        const label = WAVE_TITLES[(player.wave - 1) % WAVE_TITLES.length];
+        waveSubEl.textContent = `${label} · ${enemies.length} on the field`;
+      }
     }
   } else {
     audio.playHit(false);
@@ -1292,48 +2207,56 @@ function damagePlayer(amount: number) {
   player.trauma = Math.min(1, player.trauma + 0.18);
   if (player.hull <= 0 && !player.paused) {
     player.hull = 0;
+    spawnExplosion(player.x, getTerrainHeight(player.x, player.z), player.z, true);
+    if (gameMode === "story") {
+      failStoryChapter("DUNEFALL // CHASSIS DESTROYED");
+      return;
+    }
+
     player.paused = true;
     firing = false;
     if (document.pointerLockElement) document.exitPointerLock();
-    spawnExplosion(player.x, getTerrainHeight(player.x, player.z), player.z, true);
-
-    const runStats = {
-      score: Math.max(0, Math.round(player.score)),
-      waves: Math.max(1, Math.round(player.wave)),
-      kills: Math.max(0, Math.round(player.kills)),
-    };
-    goScoreEl.textContent = runStats.score.toLocaleString();
-    goWaveEl.textContent = String(runStats.waves);
-    goKillsEl.textContent = String(runStats.kills);
-    goRankEl.textContent = "Saving run to start.ng leaderboard...";
+    goTitleEl.textContent = "DUNEFALL // UNIT DOWN";
+    goWaveLblEl.textContent = "WAVE";
+    btnPlayAgain.textContent = "Deploy Again";
+    goScoreEl.textContent = Math.max(0, Math.round(player.score)).toLocaleString();
+    goWaveEl.textContent = String(Math.max(1, Math.round(player.wave)));
+    goKillsEl.textContent = String(Math.max(0, Math.round(player.kills)));
     gameOverModal.classList.remove("hidden");
-
-    const kit = (window as unknown as { startng?: StartNgKit }).startng;
-    if (kit?.saveRun) {
-      kit
-        .saveRun(runStats)
-        .then((res) => {
-          if (res?.ok && res.result) {
-            goRankEl.textContent = `Leaderboard Rank #${res.result.rank ?? "-"} · Best ${res.result.best ?? runStats.score}`;
-          } else {
-            goRankEl.textContent = "Sign in on start.ng to save your best run to the leaderboard.";
-          }
-        })
-        .catch(() => {
-          goRankEl.textContent = "Sign in on start.ng to save your best run to the leaderboard.";
-        });
-    } else {
-      goRankEl.textContent = "Play on start.ng to save your best run to the global leaderboard.";
-    }
+    submitStartNgStats(goRankEl);
   }
 }
 
-// Initialize opening skirmish & pre-warm all WebGL shaders once at startup (eliminates first-explosion hitch!)
+// Initialize cinematic opening backdrop, pre-warm WebGL shaders safely, and open Command Mode Select!
 resetBattlefield();
 syncSettingsUI();
-renderer.compile(scene, camera);
-window.setTimeout(() => aimHintEl.classList.add("hidden"), 4500);
-Object.assign(window, { renderer, scene, camera, __dunefall: { player, enemies, allyCars, terrain } });
+openModeMenu();
+try {
+  renderer.compile(scene, camera);
+} catch {
+  // Shader compile fallback on constrained GPU contexts
+}
+window.setTimeout(() => aimHintEl.classList.add("hidden"), 5500);
+Object.assign(window, {
+  renderer,
+  scene,
+  camera,
+  __dunefall: {
+    player,
+    enemies,
+    allyCars,
+    terrain,
+    campaign,
+    getMode: () => gameMode,
+    startStoryChapter,
+    startEndlessMode,
+    openModeMenu,
+    missionCores,
+    relayTowers,
+    artilleryPylons,
+    getConvoy: () => convoy,
+  },
+});
 
 // ── 11. Main Simulation & Rendering Loop (THREE.Timer + Real-Time Shake) ─────
 const timer = new THREE.Timer();
@@ -1370,6 +2293,24 @@ renderer.setAnimationLoop(() => {
     fpsAccum = 0;
   }
 
+  // Radio comms timer & post-clear chapter transition beat
+  if (!menuOpen && activeRadio) {
+    radioTimer -= realDt;
+    if (radioTimer <= 0) advanceRadio();
+  }
+  if (chapterTransitionTimer > 0 && !player.paused) {
+    chapterTransitionTimer -= realDt;
+    if (chapterTransitionTimer <= 0) {
+      if (pendingVictory) {
+        pendingVictory = false;
+        showVictoryScreen();
+      } else if (pendingNextChapterIdx !== null) {
+        const nextIdx = pendingNextChapterIdx;
+        openChapterBriefing(campaign.chapterIdx, nextIdx);
+      }
+    }
+  }
+
   // Hit-stop scales simulation dt while keeping camera shake decaying in real time!
   let simDt = player.paused ? 0 : realDt;
   if (player.hitStop > 0 && !player.paused) {
@@ -1379,6 +2320,11 @@ renderer.setAnimationLoop(() => {
   elapsed += simDt;
 
   if (!player.paused) {
+    if (gameMode === "story" && storyPhase < 2) {
+      campaign.totalTime += simDt;
+      campaign.chapterTime += simDt;
+    }
+
     // ── A. Player Movement, Stance Morph & Car Physics ──
     player.morph += (player.targetMorph - player.morph) * (1 - Math.exp(-8.5 * simDt));
     const targetSiege = player.stance === "siege" ? 1 : 0;
@@ -1392,7 +2338,8 @@ renderer.setAnimationLoop(() => {
       (keys.has("a") || keys.has("arrowleft") || touchMove.left ? 1 : 0);
 
     const isCar = player.morph > 0.5;
-    const baseSpeed = isCar ? 27.5 : player.stance === "siege" ? 6.5 : 13.5;
+    const speedMult = gameMode === "story" ? campaign.speedMult : 1;
+    const baseSpeed = (isCar ? 27.5 : player.stance === "siege" ? 6.5 : 13.5) * speedMult;
 
     let wantVx = 0;
     let wantVz = 0;
@@ -1496,7 +2443,7 @@ renderer.setAnimationLoop(() => {
     if (firing && !player.overheated && player.fireCd <= 0 && !player.studioMode) {
       const w = WEAPONS[player.weaponSlot];
       const siegeMult = player.stance === "siege" ? 1.45 : 1.0;
-      const tierMult = 1 + (player.tier - 1) * 0.18 + (player.upRail - 1) * 0.1;
+      const tierMult = (1 + (player.tier - 1) * 0.18 + (player.upRail - 1) * 0.1) * (gameMode === "story" ? campaign.damageMult : 1);
 
       player.fireCd = w.cooldown / siegeMult;
       player.heat = Math.min(100, player.heat + w.heat * (player.stance === "siege" ? 0.78 : 1));
@@ -1568,57 +2515,120 @@ renderer.setAnimationLoop(() => {
       dt: simDt,
     });
 
-    // ── D. Enemy War Robots AI, Firing & Solid Collision (Zero Clipping!) ──
+    // ── D. Enemy War Robots & Boss SOLARIS-0 AI, Firing & Solid Collision ──
     for (const e of enemies) {
-      const dxP = player.x - e.x;
-      const dzP = player.z - e.z;
-      const distP = Math.hypot(dxP, dzP) || 1;
-
-      if (!player.freezeEnemies) {
-        // Turn toward player & advance to optimal combat range (~26–38m), strafing tactically
-        const targetYaw = Math.atan2(-dxP, -dzP);
-        const yDiff = Math.atan2(Math.sin(targetYaw - e.yaw), Math.cos(targetYaw - e.yaw));
-        e.yaw += yDiff * (1 - Math.exp(-3.6 * simDt));
-
-        const moveSpd = e.heavy ? 4.4 : 6.2;
-        const approach = distP > 34 ? 1 : distP < 18 ? -0.55 : 0.1;
-        const fwdX = dxP / distP;
-        const fwdZ = dzP / distP;
-        const stX = -fwdZ * e.strafeDir * 0.45;
-        const stZ = fwdX * e.strafeDir * 0.45;
-        e.x += (fwdX * approach + stX) * moveSpd * simDt;
-        e.z += (fwdZ * approach + stZ) * moveSpd * simDt;
-        e.walkCycle += simDt * moveSpd * 0.7;
-
-        // Fire crimson laser/cannon bursts at player when in range
-        e.fireCd -= simDt;
-        if (e.fireCd <= 0 && distP < 78) {
-          e.fireCd = (e.heavy ? 1.45 : 1.85) + Math.random() * 0.7;
-          e.rig.muzzle.getWorldPosition(tmpV1);
-          tmpV2.set(player.x - tmpV1.x, py + 2.1 - tmpV1.y, player.z - tmpV1.z).normalize();
-          tmpV2.x += (Math.random() - 0.5) * 0.06;
-          tmpV2.z += (Math.random() - 0.5) * 0.06;
-          tmpV2.normalize();
-          spawnProjectile({
-            x: tmpV1.x,
-            y: tmpV1.y,
-            z: tmpV1.z,
-            dirX: tmpV2.x,
-            dirY: tmpV2.y,
-            dirZ: tmpV2.z,
-            speed: 58,
-            damage: e.heavy ? 13 : 8,
-            color: 0xff4040,
-            friendly: false,
-            length: 2.6,
-          });
+      // In Chapter 3 (Convoy), Crimson raiders prioritize ATLAS-6 if closer than the player
+      let tgtX = player.x;
+      let tgtZ = player.z;
+      let tgtY = py + 2.1;
+      if (convoy && !e.isBoss) {
+        const dPlayer = Math.hypot(player.x - e.x, player.z - e.z);
+        const dConvoy = Math.hypot(convoy.x - e.x, convoy.z - e.z);
+        if (dConvoy < dPlayer + 14) {
+          tgtX = convoy.x;
+          tgtZ = convoy.z;
+          tgtY = getTerrainHeight(convoy.x, convoy.z) + 2.0;
         }
       }
 
-      [e.x, e.z] = pushOutOfMesas(e.x, e.z, e.heavy ? 2.4 : 1.9);
+      const dxP = tgtX - e.x;
+      const dzP = tgtZ - e.z;
+      const distP = Math.hypot(dxP, dzP) || 1;
+
+      if (!player.freezeEnemies) {
+        const targetYaw = Math.atan2(-dxP, -dzP);
+        const yDiff = Math.atan2(Math.sin(targetYaw - e.yaw), Math.cos(targetYaw - e.yaw));
+        e.yaw += yDiff * (1 - Math.exp(-(e.isBoss ? 4.4 : 3.6) * simDt));
+
+        const isOverdrive = e.isBoss && e.bossPhase === 2;
+        const moveSpd = e.isBoss ? (isOverdrive ? 7.6 : 5.2) : e.heavy ? 4.4 : 6.2;
+        const idealMax = e.isBoss ? 42 : 34;
+        const idealMin = e.isBoss ? 22 : 18;
+        const approach = distP > idealMax ? 1 : distP < idealMin ? -0.55 : 0.1;
+        const fwdX = dxP / distP;
+        const fwdZ = dzP / distP;
+        const stX = -fwdZ * e.strafeDir * (e.isBoss ? 0.65 : 0.45);
+        const stZ = fwdX * e.strafeDir * (e.isBoss ? 0.65 : 0.45);
+        e.x += (fwdX * approach + stX) * moveSpd * simDt;
+        e.z += (fwdZ * approach + stZ) * moveSpd * simDt;
+        e.walkCycle += simDt * moveSpd * (e.isBoss ? 0.42 : 0.7);
+
+        // Fire bursts (Boss SOLARIS-0 fires twin/triple plasma rail fans + Solar Barrage!)
+        e.fireCd -= simDt;
+        if (e.fireCd <= 0 && distP < (e.isBoss ? 96 : 78)) {
+          if (e.isBoss) {
+            e.fireCd = isOverdrive ? 1.05 : 1.55;
+            e.rig.muzzle.getWorldPosition(tmpV1);
+            const baseYaw = Math.atan2(tgtX - tmpV1.x, tgtZ - tmpV1.z);
+            const shots = isOverdrive ? [-0.14, 0, 0.14] : [-0.06, 0.06];
+            for (const spread of shots) {
+              const ang = baseYaw + spread;
+              const horizD = Math.hypot(tgtX - tmpV1.x, tgtZ - tmpV1.z) || 1;
+              const dy = (tgtY - tmpV1.y) / horizD;
+              tmpV2.set(Math.sin(ang), dy, Math.cos(ang)).normalize();
+              spawnProjectile({
+                x: tmpV1.x,
+                y: tmpV1.y,
+                z: tmpV1.z,
+                dirX: tmpV2.x,
+                dirY: tmpV2.y,
+                dirZ: tmpV2.z,
+                speed: isOverdrive ? 76 : 64,
+                damage: isOverdrive ? 15 : 12,
+                color: 0xff6b35,
+                friendly: false,
+                length: 4.2,
+              });
+            }
+          } else {
+            e.fireCd = (e.heavy ? 1.45 : 1.85) + Math.random() * 0.7;
+            e.rig.muzzle.getWorldPosition(tmpV1);
+            tmpV2.set(tgtX - tmpV1.x, tgtY - tmpV1.y, tgtZ - tmpV1.z).normalize();
+            tmpV2.x += (Math.random() - 0.5) * 0.06;
+            tmpV2.z += (Math.random() - 0.5) * 0.06;
+            tmpV2.normalize();
+            spawnProjectile({
+              x: tmpV1.x,
+              y: tmpV1.y,
+              z: tmpV1.z,
+              dirX: tmpV2.x,
+              dirY: tmpV2.y,
+              dirZ: tmpV2.z,
+              speed: 58,
+              damage: e.heavy ? 13 : 8,
+              color: 0xff4040,
+              friendly: false,
+              length: 2.6,
+            });
+          }
+        }
+
+        // Boss Solar Barrage telegraphed ground strikes!
+        if (e.isBoss && e.barrageCd !== undefined) {
+          e.barrageCd -= simDt;
+          if (e.barrageCd <= 0) {
+            e.barrageCd = isOverdrive ? 4.4 : 6.4;
+            const ringCount = isOverdrive ? 2 : 1;
+            for (let r = 0; r < ringCount; r++) {
+              const rx = player.x + (r === 0 ? player.vx * 0.5 : (Math.random() - 0.5) * 16);
+              const rz = player.z + (r === 0 ? player.vz * 0.5 : (Math.random() - 0.5) * 16);
+              spawnDangerRing(rx, rz, isOverdrive ? 7.5 : 6.5, 1.65, isOverdrive ? 32 : 24);
+            }
+          }
+        }
+      }
+
+      if (e.solarCore) e.solarCore.rotation.y += simDt * (e.bossPhase === 2 ? 6.5 : 2.2);
+      if (e.overdriveAura) {
+        const mat = e.overdriveAura.material as THREE.MeshBasicMaterial;
+        mat.opacity = e.bossPhase === 2 ? 0.45 + Math.sin(elapsed * 8) * 0.25 : 0;
+        e.overdriveAura.rotation.z += simDt * 1.8;
+      }
+
+      [e.x, e.z] = pushOutOfMesas(e.x, e.z, e.isBoss ? 4.2 : e.heavy ? 2.4 : 1.9);
 
       // Solid collision with Player (high-speed Car ramming deals massive damage + knockback!)
-      const pMinDist = (isCar ? 2.5 : 2.1) + (e.heavy ? 2.2 : 1.8);
+      const pMinDist = (isCar ? 2.5 : 2.1) + (e.isBoss ? 3.8 : e.heavy ? 2.2 : 1.8);
       const pdx = player.x - e.x;
       const pdz = player.z - e.z;
       const pd = Math.hypot(pdx, pdz);
@@ -1836,6 +2846,270 @@ renderer.setAnimationLoop(() => {
       }
     }
 
+    // ── F2. Story Mode Objectives (Cores, Relays, ATLAS-6 Convoy, Pylons & Danger Rings) ──
+    if (gameMode === "story" && storyPhase < 2) {
+      const ch = CHAPTERS[campaign.chapterIdx];
+
+      // Chapter 1: Encrypted Relay Cores
+      for (let i = missionCores.length - 1; i >= 0; i--) {
+        const mc = missionCores[i];
+        mc.bob += simDt * 3.2;
+        mc.rig.cube.rotation.y += simDt * 2.8;
+        mc.rig.cube.position.y = 1.35 + Math.sin(mc.bob) * 0.25;
+        mc.rig.ring.rotation.z += simDt * 1.4;
+
+        const dist = Math.hypot(player.x - mc.x, player.z - mc.z);
+        if (dist < 4.2) {
+          audio.playCorePickup();
+          scene.remove(mc.rig.group);
+          mc.wpEl.remove();
+          missionCores.splice(i, 1);
+          storyCoresCollected += 1;
+          player.score += 220;
+          player.hull = Math.min(player.maxHull, player.hull + 20);
+          spawnSparkBurst(player.x, py + 1.8, player.z, 16, 0x4ade80, 12);
+          updateStoryObjectiveHUD(
+            "Recover 3 Helios Relay Cores",
+            `${storyCoresCollected} / ${storyCoresTotal}`,
+            (storyCoresCollected / Math.max(1, storyCoresTotal)) * 100,
+            missionCores.length > 0 ? `${missionCores.length} beacon(s) remaining on radar` : "All Helios Relay Cores secured!"
+          );
+          if (storyCoresCollected >= storyCoresTotal) {
+            completeStoryChapter();
+          }
+        }
+      }
+
+      // Chapter 2: Helios Relay Towers Capture & Hold
+      if (ch.objectiveType === "capture_relays" && relayTowers.length > 0) {
+        let capturedCount = 0;
+        let activeCapturePct = 0;
+        let inAnyRing = false;
+
+        for (const rt of relayTowers) {
+          rt.rig.spinner.rotation.y += simDt * (rt.captured ? 3.2 : 1.0);
+          if (rt.captured) {
+            capturedCount += 1;
+            continue;
+          }
+          const d = Math.hypot(player.x - rt.x, player.z - rt.z);
+          const inside = d <= rt.radius;
+          if (inside) {
+            inAnyRing = true;
+            rt.progress = Math.min(100, rt.progress + simDt * 13.5);
+            activeCapturePct = Math.max(activeCapturePct, rt.progress);
+            rt.rig.ringMat.color.setHex(0x4ade80);
+            rt.rig.fillDisc.scale.setScalar(Math.max(0.05, rt.progress / 100));
+
+            if (rt.progress >= 100) {
+              rt.captured = true;
+              capturedCount += 1;
+              rt.rig.skyBeamMat.opacity = 0.44;
+              (rt.rig.dishCore.material as THREE.MeshStandardMaterial).emissive.setHex(0x22c55e);
+              (rt.rig.dishCore.material as THREE.MeshStandardMaterial).color.setHex(0x86efac);
+              rt.wpEl.className = "world-wp green";
+              rt.label = `${rt.label} ONLINE`;
+              audio.playObjectiveComplete();
+              player.hull = Math.min(player.maxHull, player.hull + 35);
+              player.score += 350;
+              spawnSparkBurst(rt.x, getTerrainHeight(rt.x, rt.z) + 3.5, rt.z, 22, 0x4ade80, 14);
+              showCallout(`${rt.label} · +35 HULL RESTORED`);
+
+              if (capturedCount === 1 && storyPhase === 0) {
+                storyPhase = 1;
+                enqueueRadio(ch.twistComms, true);
+                const other = relayTowers.find((t) => !t.captured);
+                if (other) {
+                  spawnEnemyUnit(other.x - 10, other.z - 8, true, 130);
+                  spawnEnemyUnit(other.x + 10, other.z - 8, true, 130);
+                  spawnEnemyUnit(other.x, other.z + 12, false, 78);
+                }
+              }
+            }
+          } else {
+            rt.rig.ringMat.color.setHex(0xf5b942);
+          }
+        }
+
+        const totalPct = ((capturedCount * 100 + (inAnyRing ? activeCapturePct : 0)) / (relayTowers.length * 100)) * 100;
+        updateStoryObjectiveHUD(
+          "Capture Helios Relay Towers",
+          `${capturedCount} / ${relayTowers.length}`,
+          totalPct,
+          inAnyRing ? `UPLINKING RELAY · ${Math.round(activeCapturePct)}% (HOLD RING!)` : "Move inside a glowing relay ring to capture"
+        );
+
+        if (capturedCount >= relayTowers.length) {
+          completeStoryChapter();
+        } else if (!player.freezeEnemies) {
+          storyReinforceTimer -= simDt;
+          if (storyReinforceTimer <= 0 && enemies.length < 4) {
+            storyReinforceTimer = 11;
+            const targetTower = relayTowers.find((t) => !t.captured) ?? relayTowers[0];
+            spawnEnemyUnit(targetTower.x + (Math.random() - 0.5) * 24, targetTower.z - 16, false, 74);
+          }
+        }
+      }
+
+      // Chapter 3: ATLAS-6 Convoy Escort
+      if (ch.objectiveType === "escort_convoy" && convoy) {
+        const distPlayer = Math.hypot(player.x - convoy.x, player.z - convoy.z);
+        const boosted = distPlayer <= 24;
+        const [wx, wz] = convoy.waypoints[convoy.waypointIdx];
+        const dxW = wx - convoy.x;
+        const dzW = wz - convoy.z;
+        const dW = Math.hypot(dxW, dzW);
+
+        if (!player.freezeEnemies) {
+          const wantSpd = boosted ? 8.6 : 4.3;
+          convoy.speed += (wantSpd - convoy.speed) * (1 - Math.exp(-3.5 * simDt));
+          if (dW > 1.5) {
+            const tyaw = Math.atan2(-dxW, -dzW);
+            const yd = Math.atan2(Math.sin(tyaw - convoy.yaw), Math.cos(tyaw - convoy.yaw));
+            convoy.yaw += yd * (1 - Math.exp(-3.2 * simDt));
+            convoy.x -= Math.sin(convoy.yaw) * convoy.speed * simDt;
+            convoy.z -= Math.cos(convoy.yaw) * convoy.speed * simDt;
+            [convoy.x, convoy.z] = pushOutOfMesas(convoy.x, convoy.z, 3.6);
+          } else if (convoy.waypointIdx + 1 < convoy.waypoints.length) {
+            convoy.waypointIdx += 1;
+          } else {
+            // Reached Northern Extraction Gate!
+            updateStoryObjectiveHUD("ATLAS-6 Reached Extraction Gate!", "100%", 100, "Fusion core delivered safely!");
+            completeStoryChapter();
+          }
+
+          // Mid-mission ambush roadblock!
+          if (!convoy.ambushSpawned && convoy.z < 6) {
+            convoy.ambushSpawned = true;
+            storyPhase = 1;
+            enqueueRadio(ch.twistComms, true);
+            spawnEnemyUnit(convoy.x - 16, convoy.z - 28, true, 128);
+            spawnEnemyUnit(convoy.x + 16, convoy.z - 28, true, 128);
+            spawnEnemyUnit(convoy.x - 6, convoy.z - 36, false, 78);
+            spawnEnemyUnit(convoy.x + 8, convoy.z - 36, false, 78);
+            showCallout("CRIMSON AMBUSH AHEAD OF ATLAS-6!");
+          }
+
+          storyReinforceTimer -= simDt;
+          if (storyReinforceTimer <= 0 && enemies.length < 3 && convoy.z > -44) {
+            storyReinforceTimer = 9.5;
+            spawnEnemyUnit(convoy.x + (Math.random() > 0.5 ? 24 : -24), convoy.z - 24, false, 76);
+          }
+
+          // ATLAS-6 self-defense roof turret
+          convoy.fireCd -= simDt;
+          if (convoy.fireCd <= 0 && enemies.length > 0) {
+            let nearest = enemies[0];
+            let bestD = Math.hypot(nearest.x - convoy.x, nearest.z - convoy.z);
+            for (const en of enemies) {
+              const dd = Math.hypot(en.x - convoy.x, en.z - convoy.z);
+              if (dd < bestD) {
+                bestD = dd;
+                nearest = en;
+              }
+            }
+            if (bestD < 62) {
+              convoy.fireCd = 0.85;
+              const cy = getTerrainHeight(convoy.x, convoy.z);
+              convoy.rig.turret.rotation.y = Math.atan2(-(nearest.x - convoy.x), -(nearest.z - convoy.z)) - convoy.yaw;
+              tmpV2.set(nearest.x - convoy.x, getTerrainHeight(nearest.x, nearest.z) + 2.2 - (cy + 3.0), nearest.z - convoy.z).normalize();
+              spawnProjectile({
+                x: convoy.x,
+                y: cy + 3.0,
+                z: convoy.z,
+                dirX: tmpV2.x,
+                dirY: tmpV2.y,
+                dirZ: tmpV2.z,
+                speed: 98,
+                damage: 14,
+                color: 0x4ade80,
+                friendly: true,
+                length: 2.4,
+              });
+            }
+          }
+        }
+
+        const cy = getTerrainHeight(convoy.x, convoy.z);
+        convoy.rig.group.position.set(convoy.x, cy, convoy.z);
+        getTerrainNormal(convoy.x, convoy.z, tmpNorm);
+        yawQ.setFromAxisAngle(upVec, convoy.yaw);
+        convoy.rig.group.quaternion.setFromUnitVectors(upVec, tmpNorm).multiply(yawQ);
+        for (const w of convoy.rig.wheels) w.rotation.x -= (convoy.speed / 0.84) * simDt;
+        convoy.rig.auraMat.opacity = boosted ? 0.45 : 0.14;
+
+        const routePct = Math.max(0, Math.min(100, ((40 - convoy.z) / 96) * 100));
+        const hpPct = Math.max(0, Math.round((convoy.hp / convoy.maxHp) * 100));
+        updateStoryObjectiveHUD(
+          "Escort ATLAS-6 to Extraction Gate",
+          `${Math.round(routePct)}%`,
+          routePct,
+          `ATLAS-6 HULL: ${hpPct}% · ${boosted ? "ESCORT BOOST ACTIVE" : "MOVE CLOSER TO BOOST"}`
+        );
+      }
+
+      // Chapter 4: Crimson Artillery Pylons
+      if (ch.objectiveType === "destroy_pylons" && artilleryPylons.length > 0) {
+        for (const pyObj of artilleryPylons) {
+          pyObj.rig.emitter.rotation.y += simDt * 1.9;
+          pyObj.rig.core.rotation.y -= simDt * 2.5;
+          pyObj.hitFlash = Math.max(0, pyObj.hitFlash - simDt);
+
+          if (!player.freezeEnemies) {
+            pyObj.fireCd -= simDt;
+            if (pyObj.fireCd <= 0) {
+              pyObj.fireCd = 3.8 + Math.random() * 2.2;
+              const tx = player.x + player.vx * 0.45 + (Math.random() - 0.5) * 10;
+              const tz = player.z + player.vz * 0.45 + (Math.random() - 0.5) * 10;
+              spawnDangerRing(tx, tz, 6.5, 1.85, 26);
+            }
+          }
+        }
+        if (!player.freezeEnemies) {
+          storyReinforceTimer -= simDt;
+          if (storyReinforceTimer <= 0 && enemies.length < 3) {
+            storyReinforceTimer = 10.5;
+            const p0 = artilleryPylons[Math.floor(Math.random() * artilleryPylons.length)];
+            spawnEnemyUnit(p0.x + (Math.random() - 0.5) * 14, p0.z + 10, false, 78);
+          }
+        }
+      }
+
+      // Chapter 5: Live Boss Objective Sync
+      if (ch.objectiveType === "boss_solaris") {
+        const boss = enemies.find((e) => e.isBoss);
+        if (boss) {
+          const hpPct = Math.max(0, (boss.hp / boss.maxHp) * 100);
+          bossFillEl.style.width = `${hpPct}%`;
+          updateStoryObjectiveHUD(
+            "Defeat Warden Vex in SOLARIS-0",
+            `${Math.ceil(hpPct)}% HP`,
+            100 - hpPct,
+            boss.bossPhase === 2 ? "SOLAR OVERDRIVE · DODGE MORTAR BARRAGES!" : "Break SOLARIS-0 below 50% HP"
+          );
+        }
+      }
+    }
+
+    // Telegraphed Artillery & Solar Barrage Danger Rings (Chapters 4 & 5)
+    for (let i = dangerRings.length - 1; i >= 0; i--) {
+      const dr = dangerRings[i];
+      dr.timer += simDt;
+      const t = Math.min(1, dr.timer / dr.maxTime);
+      dr.rig.inner.scale.setScalar(Math.max(0.05, t));
+      dr.rig.innerMat.opacity = 0.18 + t * 0.48;
+      if (dr.timer >= dr.maxTime) {
+        const gy = getTerrainHeight(dr.x, dr.z);
+        spawnExplosion(dr.x, gy + 0.3, dr.z, true);
+        const dp = Math.hypot(player.x - dr.x, player.z - dr.z);
+        if (dp <= dr.radius) {
+          damagePlayer(dr.damage);
+        }
+        scene.remove(dr.rig.group);
+        dangerRings.splice(i, 1);
+      }
+    }
+
     // ── G. Projectiles, Homing Missiles & Splash Craters ──
     for (let i = projectiles.length - 1; i >= 0; i--) {
       const p = projectiles[i];
@@ -1884,13 +3158,14 @@ renderer.setAnimationLoop(() => {
         }
       }
 
-      // Hit enemies (friendly projectiles)
+      // Hit enemies & Artillery Pylons (friendly projectiles)
       if (!hit && p.friendly) {
         for (let ei = enemies.length - 1; ei >= 0; ei--) {
           const e = enemies[ei];
-          const ey = getTerrainHeight(e.x, e.z) + 2.2;
-          const r = e.heavy ? 2.6 : 2.1;
-          if (Math.hypot(p.x - e.x, p.z - e.z) < r && Math.abs(p.y - ey) < 2.6) {
+          const ey = getTerrainHeight(e.x, e.z) + (e.isBoss ? 4.2 : 2.2);
+          const r = e.isBoss ? 4.5 : e.heavy ? 2.6 : 2.1;
+          const h = e.isBoss ? 5.0 : 2.6;
+          if (Math.hypot(p.x - e.x, p.z - e.z) < r && Math.abs(p.y - ey) < h) {
             hit = true;
             if (p.splash > 0) {
               spawnExplosion(p.x, p.y, p.z, p.splash > 5);
@@ -1901,6 +3176,22 @@ renderer.setAnimationLoop(() => {
             break;
           }
         }
+        if (!hit && artilleryPylons.length > 0) {
+          for (let pi = artilleryPylons.length - 1; pi >= 0; pi--) {
+            const pyObj = artilleryPylons[pi];
+            const pgy = getTerrainHeight(pyObj.x, pyObj.z) + 4.4;
+            if (Math.hypot(p.x - pyObj.x, p.z - pyObj.z) < 3.4 && Math.abs(p.y - pgy) < 5.0) {
+              hit = true;
+              if (p.splash > 0) {
+                spawnExplosion(p.x, p.y, p.z, p.splash > 5);
+              } else {
+                spawnSparkBurst(p.x, p.y, p.z, 8, 0xff8866, 10);
+                damagePylon(pyObj, p.damage);
+              }
+              break;
+            }
+          }
+        }
       } else if (!hit && !p.friendly) {
         // Enemy projectile hitting player
         const playerY = py + (isCar ? 1.0 : 2.3);
@@ -1908,6 +3199,17 @@ renderer.setAnimationLoop(() => {
           hit = true;
           spawnSparkBurst(p.x, p.y, p.z, 8, bracing ? 0xf5b942 : 0xff5544, 9);
           damagePlayer(p.damage);
+        } else if (convoy) {
+          const cy = getTerrainHeight(convoy.x, convoy.z) + 1.9;
+          if (Math.hypot(p.x - convoy.x, p.z - convoy.z) < 3.8 && Math.abs(p.y - cy) < 2.6) {
+            hit = true;
+            spawnSparkBurst(p.x, p.y, p.z, 7, 0x4ade80, 9);
+            convoy.hp = Math.max(0, convoy.hp - p.damage * 0.72);
+            if (convoy.hp <= 0) {
+              spawnExplosion(convoy.x, cy, convoy.z, true);
+              failStoryChapter("ATLAS-6 DESTROYED // CONVOY LOST");
+            }
+          }
         }
       }
 
@@ -1918,6 +3220,13 @@ renderer.setAnimationLoop(() => {
           const d = Math.hypot(p.x - e.x, p.z - e.z);
           if (d < p.splash) {
             damageEnemy(e, p.damage * (1 - (d / p.splash) * 0.5));
+          }
+        }
+        for (let pi = artilleryPylons.length - 1; pi >= 0; pi--) {
+          const pyObj = artilleryPylons[pi];
+          const d = Math.hypot(p.x - pyObj.x, p.z - pyObj.z);
+          if (d < p.splash + 1.5) {
+            damagePylon(pyObj, p.damage * (1 - (d / (p.splash + 1.5)) * 0.45));
           }
         }
       }
@@ -1980,7 +3289,14 @@ renderer.setAnimationLoop(() => {
   const shY = shake * Math.sin(realTime * 61);
 
   const playerGroundY = getTerrainHeight(player.x, player.z);
-  if (player.studioMode) {
+  if (menuOpen) {
+    // Cinematic slow desert hero orbit behind the Command Launch Overlay!
+    const ang = realTime * 0.22;
+    const rad = 16.5;
+    camera.position.set(player.x + Math.sin(ang) * rad, playerGroundY + 7.2, player.z + Math.cos(ang) * rad);
+    camLook.set(player.x, playerGroundY + 2.6, player.z - 5);
+    camera.lookAt(camLook);
+  } else if (player.studioMode) {
     studioControls.update();
   } else {
     const dist = player.camZoom + (player.morph > 0.5 ? 2.4 : 0);
@@ -2014,6 +3330,18 @@ renderer.setAnimationLoop(() => {
   let lockedOnScreen = false;
 
   for (const e of enemies) {
+    if (e.isBoss) {
+      e.hpEl.style.display = "none";
+      if (e.id === lockedEnemyId) {
+        tmpV2.set(e.x, getTerrainHeight(e.x, e.z) + 4.4, e.z).project(camera);
+        if (tmpV2.z <= 1) {
+          lockedOnScreen = true;
+          reticleEl.style.left = `${tmpV2.x * wHalf + wHalf}px`;
+          reticleEl.style.top = `${-tmpV2.y * hHalf + hHalf}px`;
+        }
+      }
+      continue;
+    }
     tmpV1.set(e.x, getTerrainHeight(e.x, e.z) + (e.heavy ? 5.3 : 4.5), e.z).project(camera);
     if (tmpV1.z > 1) {
       e.hpEl.style.display = "none";
@@ -2034,6 +3362,48 @@ renderer.setAnimationLoop(() => {
         reticleEl.style.left = `${tmpV2.x * wHalf + wHalf}px`;
         reticleEl.style.top = `${-tmpV2.y * hHalf + hHalf}px`;
       }
+    }
+  }
+
+  // Project Story Mode 3D Objective Waypoints & Artillery Pylon HP Bars
+  const projectWp = (el: HTMLDivElement, wx: number, wy: number, wz: number, baseLabel: string) => {
+    const distM = Math.round(Math.hypot(wx - player.x, wz - player.z));
+    tmpV1.set(wx, wy, wz).project(camera);
+    let sx = tmpV1.x * wHalf + wHalf;
+    let sy = -tmpV1.y * hHalf + hHalf;
+    if (tmpV1.z > 1) {
+      sx = sx < wHalf ? window.innerWidth - 46 : 46;
+      sy = window.innerHeight - 96;
+    }
+    sx = THREE.MathUtils.clamp(sx, 48, window.innerWidth - 48);
+    sy = THREE.MathUtils.clamp(sy, 76, window.innerHeight - 96);
+    el.style.left = `${sx}px`;
+    el.style.top = `${sy}px`;
+    const tag = el.firstElementChild;
+    if (tag) tag.textContent = `${baseLabel} · ${distM}m`;
+  };
+
+  for (const mc of missionCores) {
+    projectWp(mc.wpEl, mc.x, getTerrainHeight(mc.x, mc.z) + 3.2, mc.z, mc.label);
+  }
+  for (const rt of relayTowers) {
+    const lbl = rt.captured ? rt.label : rt.progress > 0 ? `${rt.label} ${Math.round(rt.progress)}%` : rt.label;
+    projectWp(rt.wpEl, rt.x, getTerrainHeight(rt.x, rt.z) + 11.2, rt.z, lbl);
+  }
+  if (convoy) {
+    projectWp(convoy.wpEl, convoy.x, getTerrainHeight(convoy.x, convoy.z) + 5.2, convoy.z, "ATLAS-6");
+  }
+  for (const pyObj of artilleryPylons) {
+    const pyTop = getTerrainHeight(pyObj.x, pyObj.z) + 10.6;
+    projectWp(pyObj.wpEl, pyObj.x, pyTop, pyObj.z, pyObj.label);
+    tmpV1.set(pyObj.x, pyTop - 1.2, pyObj.z).project(camera);
+    if (tmpV1.z > 1) {
+      pyObj.hpEl.style.display = "none";
+    } else {
+      pyObj.hpEl.style.display = "block";
+      pyObj.hpEl.style.left = `${tmpV1.x * wHalf + wHalf}px`;
+      pyObj.hpEl.style.top = `${-tmpV1.y * hHalf + hHalf}px`;
+      pyObj.fillEl.style.width = `${Math.max(0, (pyObj.hp / pyObj.maxHp) * 100)}%`;
     }
   }
 
@@ -2076,7 +3446,7 @@ renderer.setAnimationLoop(() => {
 
   // ── L. Render Frame (High PBR Bloom vs Eco Fast Pass) ──
   renderer.info.reset();
-  if (ecoMode) {
+  if (ecoMode || !composer) {
     renderer.render(scene, camera);
   } else {
     composer.render();

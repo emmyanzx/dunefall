@@ -1,6 +1,6 @@
 {
-  "description": "Pilot a heavy war mech across sunlit desert dunes, transform into a 6-wheel armored combat car, deploy hover drones and missile pods, and survive escalating robot waves.",
-  "story": "Out beyond the canyon mesas of Red Basin, rogue crimson war robots are advancing across the dunes. Drop in with the transforming VANGUARD mech unit, harvest emerald Energy Cores to upgrade your chassis, and hold the line in DUNEFALL.",
+  "description": "Pilot a transforming war mech across Sector 09 in a 5-chapter Story Campaign with radio comms, convoy escort, relay capture, artillery sabotage, and a two-phase boss showdown — plus Endless Skirmish.",
+  "story": "In Sector 09 — The Glass Reach, Warden Vex and the Crimson Directorate have dropped an armored mech legion to strip the ancient Helios fusion relays dry. Guided by Commander Kora and your chassis AI Vanguard-OS, fight across five desert operations, pick permanent field refits between chapters, and bring down Vex's towering dreadnought SOLARIS-0.",
   "categories": [
     "shooting-and-action",
     "3d-games",
@@ -11,7 +11,7 @@
   "leaderboard": {
     "stats": [
       { "key": "score", "label": "Score", "order": "highest" },
-      { "key": "waves", "label": "Waves", "order": "highest" },
+      { "key": "waves", "label": "Waves / Chapters", "order": "highest" },
       { "key": "kills", "label": "Mechs destroyed", "order": "highest" }
     ]
   },
@@ -27,27 +27,28 @@
     "Q — Cycle target lock between enemy mechs",
     "4 — Deploy Support Squad (2 hover drones + 3 armored cars)",
     "5 — Deploy autonomous Missile Pod (20s)",
-    "Esc — Pause, Eco/Bloom graphics preset, and audio settings"
+    "Esc — Pause, switch Story/Endless mode, graphics preset, and audio settings"
   ],
   "howToPlay": [
-    "Click the desert battlefield to lock aim and fire at advancing crimson enemy war robots.",
-    "Use G, H, J, K, and L to switch between rapid rotary miniguns, heavy autocannons, dual plasma repeaters, railgun slugs, and explosive mortars.",
-    "Press T anytime to transform into a 6-wheel armored combat car to flank dunes at high speed and ram enemies.",
-    "Collect glowing emerald Energy Cores dropped by fallen enemies to raise your Tier and upgrade Rail, Pods, and Plate.",
-    "Deploy your Support Squad (4) and Missile Pod (5) whenever heavy waves press your line."
+    "Choose Story Campaign (5 scripted desert chapters with saved progress) or Endless Skirmish from the Command Launch screen.",
+    "Follow live radio comms from Commander Kora and Vanguard-OS plus glowing 3D objective waypoints across the dunes.",
+    "Press T anytime to transform into a 6-wheel armored combat car to snatch Relay Cores, escort ATLAS-6, or dodge red artillery rings.",
+    "Between Story chapters, pick permanent tactical field refits (Overclock Rails, Composite Plate, Drone Uplink, Drive Servos, Missile Capacitors, or Pierce Cores).",
+    "Survive Warden Vex's Phase II Solar Overdrive in Chapter 5 to secure Sector 09 and log your Rank and Score on start.ng."
   ],
   "features": [
-    "Real-time 3D Three.js desert dune battlefield with craggy sandstone mesa cover and scorched blast craters",
+    "5-Chapter Story Campaign ('The Glass Reach'): Recon & Core Salvage, Helios Relay Capture, ATLAS-6 Convoy Escort, Artillery Pylon Sabotage, and the 2-Phase SOLARIS-0 Boss Finale",
+    "Diegetic non-blocking radio comms with custom SVG pilot portraits and synthesized codec audio",
+    "Between-chapter permanent Tactical Refit choices that dynamically upgrade your mech across the campaign",
     "Seamless transformation between twin-minigun War Mech and 6-wheel armored combat car",
-    "5 distinct weapon styles plus homing missile salvos and energy Brace Shield",
-    "Allied Support Squad (hover drones and armored cars) and deployable Missile Pods",
-    "Auto-detected Eco GPU preset for smooth play on laptops and mobile devices",
-    "start.ng pilot profile card, global leaderboard, and X score sharing"
+    "5 distinct weapon styles, homing missile salvos, Brace Shield, Support Squad, and deployable Missile Pods",
+    "Classic Endless Skirmish mode with auto-detected Eco GPU preset, start.ng pilot card, global leaderboard, and X score sharing"
   ],
   "walkthrough": [
-    "Use the sandstone mesas on the left flank as solid cover whenever heavy crimson mechs open fire.",
-    "Grab emerald Energy Cores early to hit Tier 2 and boost hull, plate armor, and weapon damage.",
-    "Switch to Siege Mode (X) with Railbreaker (K) railgun slugs to snipe heavy enemies across the ridge.",
-    "Transform into 6-wheel Car Mode (T) to outrun fire, sweep up scattered cores, and ram isolated enemies."
+    "Chapter 1 (First Contact): Clear the 5 Crimson scouts, then morph into Car Mode (T) to sweep up all 3 emerald Relay Core beacons fast.",
+    "Chapter 2 (Signal Fire): Hold inside each glowing Helios Relay ring with Brace Shield (RMB) raised, and deploy Support Squad (4) when Breachers drop.",
+    "Chapter 3 (Iron Convoy): Stay within 24m of ATLAS-6 for Escort Boost and intercept Crimson ambushers ahead of the hauler.",
+    "Chapter 4 (Scorched Earth): Watch for crimson ground impact rings—use Shift+A/D or Car Mode (T) to dodge while burning Pylons down with Railbreaker (K) or Craterfall (L).",
+    "Chapter 5 (Sunbreaker): Use desert mesas as cover against SOLARIS-0's plasma fans; when Vex hits 50% HP and triggers Solar Overdrive, unleash your refilled missile rack (F) and Support Squad (4)!"
   ]
 }

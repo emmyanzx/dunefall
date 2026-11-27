@@ -222,4 +222,103 @@ export class DunefallAudio {
       osc.stop(st + 0.13);
     });
   }
+
+  /** Tactical headset codec chirp + brief static squelch per radio speaker */
+  public playRadioBeep(speaker: "overwatch" | "chassis" | "vex") {
+    if (!this.enabled || !this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+
+    // Brief filtered radio squelch burst
+    if (this.noiseBuf) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = speaker === "vex" ? 950 : 2100;
+      bp.Q.value = 3.2;
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(0.09, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+      src.connect(bp).connect(ng).connect(this.master);
+      src.start(t);
+      src.stop(t + 0.08);
+    }
+
+    const pattern =
+      speaker === "overwatch"
+        ? [880, 1174.66]
+        : speaker === "chassis"
+          ? [659.25, 987.77, 1318.5]
+          : [260, 195];
+    const type: OscillatorType = speaker === "vex" ? "sawtooth" : speaker === "chassis" ? "triangle" : "sine";
+
+    pattern.forEach((f, i) => {
+      const osc = this.ctx!.createOscillator();
+      osc.type = type;
+      const st = t + 0.02 + i * 0.055;
+      osc.frequency.setValueAtTime(f, st);
+      const g = this.ctx!.createGain();
+      g.gain.setValueAtTime(speaker === "vex" ? 0.11 : 0.12, st);
+      g.gain.exponentialRampToValueAtTime(0.001, st + 0.09);
+      osc.connect(g).connect(this.master!);
+      osc.start(st);
+      osc.stop(st + 0.1);
+    });
+  }
+
+  /** Triumphant objective / chapter complete synth chord */
+  public playObjectiveComplete() {
+    if (!this.enabled || !this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    [440, 554.37, 659.25, 880].forEach((f, i) => {
+      const osc = this.ctx!.createOscillator();
+      osc.type = "triangle";
+      const st = t + i * 0.07;
+      osc.frequency.setValueAtTime(f, st);
+      const g = this.ctx!.createGain();
+      g.gain.setValueAtTime(0.2, st);
+      g.gain.exponentialRampToValueAtTime(0.001, st + 0.36);
+      osc.connect(g).connect(this.master!);
+      osc.start(st);
+      osc.stop(st + 0.38);
+    });
+  }
+
+  /** Menacing low klaxon for Warden Vex / SOLARIS-0 arrival and Solar Overdrive */
+  public playBossSiren() {
+    if (!this.enabled || !this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < 2; i++) {
+      const osc = this.ctx.createOscillator();
+      osc.type = "sawtooth";
+      const st = t + i * 0.38;
+      osc.frequency.setValueAtTime(165, st);
+      osc.frequency.exponentialRampToValueAtTime(112, st + 0.32);
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 620;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.26, st);
+      g.gain.exponentialRampToValueAtTime(0.001, st + 0.34);
+      osc.connect(lp).connect(g).connect(this.master);
+      osc.start(st);
+      osc.stop(st + 0.36);
+    }
+  }
+
+  /** High-tension lock tone for telegraphed artillery / solar barrage rings */
+  public playArtilleryWarning() {
+    if (!this.enabled || !this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(620, t);
+    osc.frequency.exponentialRampToValueAtTime(980, t + 0.16);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.11, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.connect(g).connect(this.master);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  }
 }

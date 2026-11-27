@@ -972,3 +972,622 @@ body {
     display: none;
   }
 }
+
+/* ── STORY MODE: OBJECTIVE BAR, BOSS BAR, RADIO COMMS, WAYPOINTS & MODALS ── */
+.hud-top-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.objective-bar {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--amber);
+  padding: 8px 13px 9px;
+  backdrop-filter: blur(8px);
+}
+.objective-bar.hidden {
+  display: none;
+}
+.obj-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+  margin-bottom: 3px;
+}
+.obj-counter {
+  color: var(--text);
+  font-weight: 700;
+}
+.obj-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.obj-track {
+  height: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.obj-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--amber), var(--green));
+  transition: width 0.14s ease-out;
+}
+.obj-sub {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-top: 4px;
+  min-height: 12px;
+}
+.obj-sub:empty {
+  display: none;
+}
+
+.boss-bar {
+  width: 100%;
+  background: rgba(24, 12, 15, 0.9);
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  padding: 8px 12px 9px;
+  box-shadow: 0 0 24px rgba(239, 68, 68, 0.25);
+  backdrop-filter: blur(8px);
+}
+.boss-bar.hidden {
+  display: none;
+}
+.boss-bar.overdrive {
+  border-color: #ff6b35;
+  box-shadow: 0 0 32px rgba(255, 80, 30, 0.45);
+}
+.boss-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+.boss-name {
+  color: #fecaca;
+  font-weight: 700;
+}
+.boss-phase {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #fca5a5;
+  padding: 1px 6px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.16);
+}
+.boss-bar.overdrive .boss-phase {
+  color: #fef08a;
+  border-color: #f97316;
+  background: rgba(249, 115, 22, 0.35);
+}
+.boss-track {
+  position: relative;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+.boss-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #b91c1c, #ef4444, #f97316);
+  transition: width 0.09s linear;
+}
+.boss-notch {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+/* Diegetic Non-Blocking Radio Comms Feed */
+.radio-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 340px;
+  max-width: 36vw;
+  background: rgba(16, 15, 19, 0.9);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  padding: 9px 11px;
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+  cursor: pointer;
+  animation: radioIn 0.22s ease-out;
+}
+.radio-box.hidden {
+  display: none;
+}
+.radio-box.speaker-overwatch {
+  border-left-color: var(--amber);
+}
+.radio-box.speaker-chassis {
+  border-left-color: var(--green);
+}
+.radio-box.speaker-vex {
+  border-left-color: var(--red);
+  background: rgba(28, 13, 16, 0.92);
+}
+@keyframes radioIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.radio-portrait {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.radio-portrait svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.radio-body {
+  flex: 1;
+  min-width: 0;
+}
+.radio-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  margin-bottom: 3px;
+}
+.radio-callsign {
+  font-weight: 700;
+  color: var(--amber);
+  letter-spacing: 0.05em;
+}
+.radio-box.speaker-chassis .radio-callsign {
+  color: var(--green);
+}
+.radio-box.speaker-vex .radio-callsign {
+  color: #f87171;
+}
+.radio-role {
+  color: var(--muted);
+  font-size: 8.5px;
+}
+.radio-bars {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+}
+.radio-bars i {
+  width: 2px;
+  height: 5px;
+  background: currentColor;
+  color: var(--amber);
+  animation: eqPulse 0.7s infinite ease-in-out alternate;
+}
+.radio-box.speaker-chassis .radio-bars i {
+  color: var(--green);
+}
+.radio-box.speaker-vex .radio-bars i {
+  color: var(--red);
+}
+.radio-bars i:nth-child(2) {
+  animation-delay: 0.18s;
+  height: 9px;
+}
+.radio-bars i:nth-child(3) {
+  animation-delay: 0.34s;
+  height: 6px;
+}
+@keyframes eqPulse {
+  from {
+    transform: scaleY(0.35);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.radio-text {
+  font-size: 11.5px;
+  line-height: 1.38;
+  color: var(--text);
+}
+
+/* 3D Projected World Objective Waypoint Markers */
+.world-wp {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+.world-wp-tag {
+  background: rgba(16, 15, 19, 0.85);
+  border: 1px solid rgba(230, 168, 76, 0.65);
+  color: #fde68a;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  white-space: nowrap;
+  letter-spacing: 0.05em;
+}
+.world-wp-dot {
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  background: var(--amber);
+  border: 1.5px solid #141216;
+  box-shadow: 0 0 10px rgba(245, 185, 66, 0.8);
+}
+.world-wp.green .world-wp-tag {
+  border-color: rgba(74, 222, 128, 0.72);
+  color: #bbf7d0;
+}
+.world-wp.green .world-wp-dot {
+  background: var(--green);
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.8);
+}
+.world-wp.red .world-wp-tag {
+  border-color: rgba(239, 68, 68, 0.78);
+  color: #fecaca;
+}
+.world-wp.red .world-wp-dot {
+  background: var(--red);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.9);
+}
+
+/* Mode Launch Overlay (translucent so live 3D battlefield orbits behind!) */
+.mode-modal {
+  background: radial-gradient(circle at 50% 42%, rgba(16, 14, 18, 0.34), rgba(10, 9, 12, 0.82));
+  backdrop-filter: blur(4px);
+}
+.mode-shell {
+  width: 780px;
+  max-width: 94vw;
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 24px 26px 18px;
+  background: rgba(19, 17, 22, 0.88);
+  border: 1px solid rgba(230, 168, 76, 0.42);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+}
+.mode-brand {
+  text-align: center;
+  margin-bottom: 18px;
+}
+.mode-kicker {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.mode-brand h1 {
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.05;
+  background: linear-gradient(180deg, #fff5e1 0%, #e6a84c 58%, #9c6b34 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.mode-tagline {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.mode-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 14px;
+}
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border);
+  padding: 16px;
+}
+.mode-card.featured {
+  border-color: rgba(230, 168, 76, 0.55);
+  background: linear-gradient(160deg, rgba(230, 168, 76, 0.1), rgba(20, 18, 22, 0.6));
+}
+.mode-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.mode-pill {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.mode-pill.amber {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(230, 168, 76, 0.14);
+}
+.mode-meta {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+.mode-card h2 {
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.mode-desc {
+  font-size: 12px;
+  line-height: 1.48;
+  color: #d6cec4;
+  margin-bottom: 12px;
+}
+.chapter-pills {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ch-pill {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+.ch-pill.selected {
+  background: rgba(230, 168, 76, 0.24);
+  border-color: var(--amber);
+  color: #fde68a;
+}
+.ch-pill.locked {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.mode-bullets {
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+.mode-bullets li::before {
+  content: "▸ ";
+  color: var(--amber);
+}
+.mode-cta {
+  margin-top: auto;
+  flex: none;
+}
+
+/* Chapter Debrief & Tactical Choice Modal */
+.briefing-card {
+  width: 540px;
+}
+.brief-summary {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--green);
+  margin-bottom: 14px;
+}
+.choice-section {
+  margin-bottom: 14px;
+}
+.choice-section.hidden {
+  display: none;
+}
+.choice-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--amber);
+  margin-bottom: 7px;
+}
+.choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.choice-card {
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  padding: 11px 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.choice-card:hover {
+  border-color: rgba(230, 168, 76, 0.65);
+}
+.choice-card.picked {
+  border-color: var(--green);
+  background: rgba(74, 222, 128, 0.12);
+}
+.choice-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.choice-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.choice-effect {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.next-op-box {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  padding: 11px 13px;
+}
+.next-op-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.next-op-head span {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--amber);
+}
+.next-op-head strong {
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+.next-op-box p {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #d6cec4;
+}
+.next-op-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--green);
+  margin-top: 6px;
+}
+
+/* Campaign Victory Modal */
+.victory-card {
+  width: 520px;
+}
+.victory-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  background: rgba(230, 168, 76, 0.08);
+  border: 1px solid rgba(230, 168, 76, 0.35);
+  padding: 13px 14px;
+}
+.rank-crest {
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 38px;
+  font-weight: 700;
+  color: #141216;
+  background: linear-gradient(145deg, #fde68a, #e6a84c 60%, #b45309);
+  border: 2px solid #fff3c4;
+  box-shadow: 0 0 24px rgba(230, 168, 76, 0.45);
+}
+.victory-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.victory-epilogue {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e4ddd3;
+}
+
+@media (max-width: 960px) {
+  .hud-top-center {
+    max-width: 280px;
+  }
+  .objective-bar {
+    padding: 6px 9px 7px;
+  }
+  .obj-text {
+    font-size: 11.5px;
+    margin-bottom: 4px;
+  }
+  .radio-box {
+    position: fixed;
+    left: 10px;
+    bottom: 162px;
+    width: 268px;
+    max-width: calc(100vw - 20px);
+    padding: 7px 9px;
+    z-index: 16;
+  }
+  .radio-portrait {
+    width: 34px;
+    height: 34px;
+  }
+}
+
+@media (max-width: 760px) {
+  .mode-grid,
+  .choice-grid {
+    grid-template-columns: 1fr;
+  }
+  .mode-brand h1 {
+    font-size: 28px;
+  }
+  .hud-top {
+    gap: 6px;
+  }
+  .hud-top-center {
+    position: static;
+    transform: none;
+    flex: 1 1 0;
+    min-width: 140px;
+    max-width: 230px;
+    margin: 0;
+  }
+  .obj-sub {
+    display: none;
+  }
+  .radio-box {
+    bottom: 205px;
+    width: 248px;
+  }
+}
